@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --color-farm-50: #f0fdf4;
+  --color-farm-100: #dcfce7;
+  --color-farm-200: #bbf7d0;
+  --color-farm-300: #86efac;
+  --color-farm-400: #4ade80;
+  --color-farm-500: #22c55e;
+  --color-farm-600: #16a34a;
+  --color-farm-700: #15803d;
+  --color-farm-800: #166534;
+  --color-farm-900: #14532d;
+  --color-earth-50: #fefce8;
+  --color-earth-100: #fef9c3;
+  --color-earth-200: #fef08a;
+  --color-earth-300: #fde047;
+  --color-earth-400: #facc15;
+  --color-earth-500: #eab308;
+  --color-earth-600: #ca8a04;
+  --color-earth-700: #a16207;
+  --color-earth-800: #854d0e;
+  --color-earth-900: #713f12;
+  --color-sky-50: #f0f9ff;
+  --color-sky-100: #e0f2fe;
+  --color-sky-200: #bae6fd;
+  --color-sky-300: #7dd3fc;
+  --color-sky-400: #38bdf8;
+  --color-sky-500: #0ea5e9;
+  --color-sky-600: #0284c7;
+  --color-sky-700: #0369a1;
+  --color-sky-800: #075985;
+  --color-sky-900: #0c4a6e;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
+}
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
