@@ -4,6 +4,35 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { LocationIcon, BellIcon, ThermometerIcon, WindIcon, DropletIcon, ChevronRightIcon, SearchIcon, PlusIcon, XIcon, HomeIcon, UserIcon, LightbulbIcon, ClockIcon, EditIcon } from "./components/Icons";
 
+// ==================== 数据持久化 ====================
+const STORAGE_KEYS = {
+  tasks: 'smartfarm_tasks',
+  chatMessages: 'smartfarm_chat',
+  userSettings: 'smartfarm_settings',
+  landInfo: 'smartfarm_land',
+};
+
+// 保存数据
+const saveToStorage = <T,>(key: string, data: T): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.warn('存储失败:', e);
+  }
+};
+
+// 读取数据
+const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
+  if (typeof window === 'undefined') return defaultValue;
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+};
+
 // ==================== Types ====================
 
 interface WeatherData {
@@ -227,9 +256,25 @@ function getTodayStr(): string {
 
 function getGreeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return "早上好";
+  if (h < 6) return "夜深了";
+  if (h < 9) return "早上好";
+  if (h < 12) return "上午好";
+  if (h < 14) return "中午好";
   if (h < 18) return "下午好";
-  return "晚上好";
+  if (h < 22) return "晚上好";
+  return "夜深了";
+}
+
+function getFarmingAdvice(weather: WeatherData | null): string[] {
+  if (!weather) return ["适宜农事"];
+  const advice: string[] = [];
+  if (weather.humidity > 70) advice.push("注意防病");
+  if (weather.temperature > 30) advice.push("注意防暑");
+  if (weather.temperature < 10) advice.push("注意防冻");
+  if (weather.totalPrecipitation > 0 || weather.weatherCode >= 51) advice.push("不宜喷药");
+  if (weather.windSpeed > 5) advice.push("不宜作业");
+  if (advice.length === 0) advice.push("适宜农事");
+  return advice;
 }
 
 function getLandIcon(type: string): string {
@@ -350,6 +395,14 @@ function renderSparkline(data: number[], trend: string): React.ReactNode {
   );
 }
 
+// ==================== Loading Spinner Component ====================
+const LoadingSpinner = ({ text = "加载中..." }: { text?: string }) => (
+  <div className="flex flex-col items-center justify-center py-8">
+    <div className="w-10 h-10 border-3 border-green-200 border-t-green-500 rounded-full animate-spin"></div>
+    <p className="mt-3 text-sm text-[var(--text-muted)]">{text}</p>
+  </div>
+);
+
 // ==================== Main Component ====================
 
 export default function Home() {
@@ -360,16 +413,22 @@ export default function Home() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [marketData, setMarketData] = useState<MarketItem[]>([]);
   const [marketFull, setMarketFull] = useState<MarketResponse | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([
-    { id: "1", text: "给番茄追施有机肥", done: false, date: getTodayStr(), category: "施肥", priority: "high" },
-    { id: "2", text: "检查灌溉管道", done: false, date: getTodayStr(), category: "灌溉", priority: "medium" },
-    { id: "3", text: "玉米田除草", done: true, date: getTodayStr(), category: "除草", priority: "low" },
-    { id: "4", text: "喷洒生物农药防治蛱虫", done: false, date: getTodayStr(), category: "除虫", priority: "high" },
-    { id: "5", text: "整理农具仓库", done: false, date: getTodayStr(), category: "其他", priority: "low" },
-  ]);
+
+  // 任务列表 - 从localStorage加载
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return loadFromStorage(STORAGE_KEYS.tasks, [
+      { id: "1", text: "给番茄追施有机肥", done: false, date: getTodayStr(), category: "施肥", priority: "high" },
+      { id: "2", text: "检查灌溉管道", done: false, date: getTodayStr(), category: "灌溉", priority: "medium" },
+      { id: "3", text: "玉米田除草", done: true, date: getTodayStr(), category: "除草", priority: "low" },
+      { id: "4", text: "喷洒生物农药防治蛱虫", done: false, date: getTodayStr(), category: "除虫", priority: "high" },
+      { id: "5", text: "整理农具仓库", done: false, date: getTodayStr(), category: "其他", priority: "low" },
+    ]);
+  });
 
   // ---- Tab1: Planting ----
   const [step, setStep] = useState(1);
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
   const [landArea, setLandArea] = useState("");
   const [landType, setLandType] = useState("");
   const [soilType, setSoilType] = useState("");
@@ -386,6 +445,7 @@ export default function Home() {
 
   // ---- Tab2: Market ----
   const [selectedCrop, setSelectedCrop] = useState("");
+  const [marketTab, setMarketTab] = useState(0);
 
   // ---- Location for Market ----
   const [userProvince, setUserProvince] = useState<string>("");
@@ -395,6 +455,7 @@ export default function Home() {
   const [newTask, setNewTask] = useState("");
   const [newTaskCategory, setNewTaskCategory] = useState<"施肥" | "灌溉" | "除虫" | "除草" | "其他">("其他");
   const [newTaskPriority, setNewTaskPriority] = useState<"high" | "medium" | "low">("medium");
+  const [showAddTask, setShowAddTask] = useState(false);
   const [growthRecords] = useState([
     { id: "g1", date: "05-01", text: "播种完成", img: "🌳" },
     { id: "g2", date: "05-08", text: "出苗整齐", img: "🌿" },
@@ -403,9 +464,13 @@ export default function Home() {
   ]);
 
   // ---- Tab4: Assistant ----
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: "ai", text: "你好！我是智农AI助手，可以帮你查天气、问价格、诊断病害、提供种植建议。有什么可以帮你的吗？" },
-  ]);
+  // 聊天记录 - 从localStorage加载
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return loadFromStorage(STORAGE_KEYS.chatMessages, [
+      { role: "ai", text: "你好！我是智农AI助手，可以帮你查天气、问价格、诊断病害、提供种植建议。有什么可以帮你的吗？" },
+    ]);
+  });
   const [inputText, setInputText] = useState("");
   const [voiceText, setVoiceText] = useState("");
   const [isListening, setIsListening] = useState(false);
@@ -414,6 +479,7 @@ export default function Home() {
   const [capturedFrame, setCapturedFrame] = useState<string | null>(null);
   const [videoCallActive, setVideoCallActive] = useState(false);
   const [cameraExpanded, setCameraExpanded] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
 
   // 对话上下文状态
   const [conversationContext, setConversationContext] = useState<{
@@ -476,6 +542,16 @@ export default function Home() {
       { enableHighAccuracy: true, timeout: 10000 }
     );
   }, []);
+
+  // 保存任务到localStorage
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.tasks, tasks);
+  }, [tasks]);
+
+  // 保存聊天记录到localStorage
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.chatMessages, chatMessages);
+  }, [chatMessages]);
 
   // ---- Load initial data ----
   useEffect(() => {
@@ -595,18 +671,28 @@ export default function Home() {
     setLoading(true);
     setStep(3);
     try {
-      const analyzeRes = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          landType: landType || "旱地",
-          soilType: soilType || "壤土",
-          terrain: terrain || "平原",
-          imageBase64: imageBase64 || undefined,
-        }),
-      });
-      const analyzeData = await analyzeRes.json();
-      setAnalysis(analyzeData.analysis || analyzeData);
+      let analyzeData: Record<string, unknown> | null = null;
+      try {
+        const analyzeRes = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            landType: landType || "旱地",
+            soilType: soilType || "壤土",
+            terrain: terrain || "平原",
+            imageBase64: imageBase64 || undefined,
+          }),
+        });
+        if (analyzeRes.ok) {
+          const data = await analyzeRes.json();
+          analyzeData = data.analysis || data;
+          setAnalysis(analyzeData);
+        } else {
+          console.error("分析API返回错误:", analyzeRes.status);
+        }
+      } catch (e) {
+        console.error("分析API请求失败:", e);
+      }
 
       const recommendRes = await fetch("/api/recommend", {
         method: "POST",
@@ -628,13 +714,28 @@ export default function Home() {
                 },
               }
             : undefined,
-          aiAnalysis: analyzeData.analysis || undefined,
+          aiAnalysis: analyzeData || undefined,
         }),
       });
-      const recommendData = await recommendRes.json();
-      setRecommendation(recommendData);
-      setStep(4);
-    } catch {
+
+      if (recommendRes.ok) {
+        const recommendData = await recommendRes.json();
+        setRecommendation(recommendData);
+        setStep(4);
+      } else {
+        console.error("推荐API返回错误:", recommendRes.status);
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "ai", text: "推荐服务暂时不可用，请稍后再试。" },
+        ]);
+        setStep(2);
+      }
+    } catch (err) {
+      console.error("AI分析失败:", err);
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "ai", text: "抱歉，AI分析遇到了问题。可能是网络不稳定，请稍后再试。您也可以直接点击下一步查看推荐方案。" },
+      ]);
       setStep(2);
     }
     setLoading(false);
@@ -934,10 +1035,13 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     // 1. 添加用户消息
     setChatMessages(prev => [...prev, { role: "user", text }]);
 
-    // 2. 识别意图和实体
+    // 2. 显示AI正在输入状态
+    setIsTyping(true);
+
+    // 3. 识别意图和实体
     const { intent, entities, confidence } = analyzeIntent(text);
 
-    // 3. 更新对话上下文
+    // 4. 更新对话上下文
     setConversationContext(prev => ({
       lastTopic: intent,
       mentionedCrop: entities.crop || prev.mentionedCrop,
@@ -945,10 +1049,10 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
       pendingAction: "",
     }));
 
-    // 4. 尝试执行操作
+    // 5. 尝试执行操作
     const actionResult = executeAction(intent, entities, text);
 
-    // 5. 生成回复
+    // 6. 生成回复
     setTimeout(() => {
       let reply = "";
       if (actionResult) {
@@ -957,7 +1061,8 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
         reply = generateReply(intent, entities, text);
       }
       setChatMessages(prev => [...prev, { role: "ai", text: reply }]);
-    }, source === "voice" ? 500 : 300);
+      setIsTyping(false);
+    }, source === "voice" ? 800 : 500);
   }, [analyzeIntent, executeAction, generateReply]);
 
   const handleVoiceStart = useCallback(() => {
@@ -1157,129 +1262,165 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
   // ==================== Tab 0: Home (Nature Fresh) ====================
 
   const renderDashboard = () => (
-    <div className="animate-fade-in-up space-y-6 pb-4">
-      {/* Hero */}
-      <div className="relative h-80 rounded-3xl overflow-hidden">
-        <Image src="/images/hero-farm.jpg" alt="农田" fill className="img-cover" />
-        <div className="hero-overlay absolute inset-0" />
-        <div className="absolute bottom-0 left-0 right-0 p-6">
-          <p className="text-white/70 text-sm">{getGreeting()}，{userName}</p>
-          <h1 className="text-3xl font-bold mt-1 text-white">智农规划</h1>
-          <p className="text-white/70 text-sm mt-2">让科技赋能每一寸土地</p>
-          <button
-            onClick={() => setActiveTab(1)}
-            className="btn-outline mt-5 ripple-container"
-          >
-            开始规划 →
+    <div className="animate-fade-in-up space-y-4 pb-4">
+      {/* 顶部问候区域 */}
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white text-xl shadow-lg shadow-green-200">
+            👨‍🌾
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-[#1a2e1a]">
+              {getGreeting()}，农户
+            </p>
+            <p className="text-sm text-[#8b9e82]">今天也要加油哦！</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="p-2.5 rounded-full hover:bg-green-50 transition-colors cursor-pointer active:scale-95">
+            <LocationIcon className="w-5 h-5 text-green-600" />
+          </button>
+          <button className="p-2.5 rounded-full hover:bg-green-50 transition-colors cursor-pointer active:scale-95 relative">
+            <BellIcon className="w-5 h-5 text-green-600" />
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
           </button>
         </div>
       </div>
 
-      {/* Feature Cards */}
-      <div className="space-y-4">
-        <div className="relative h-52 rounded-3xl overflow-hidden nature-card nature-card-hover animate-fade-in-up delay-100" style={{ opacity: 0 }}>
-          <Image src="/images/smart-farming.jpg" alt="智能种植" fill className="img-cover" />
-          <div className="card-overlay absolute inset-0" />
-          <div className="absolute bottom-0 left-0 right-0 p-6">
-            <h2 className="text-xl font-bold text-white">智能种植</h2>
-            <p className="text-white/70 text-sm mt-1">AI分析土地，推荐最佳作物</p>
+      {/* 天气卡片 */}
+      <div className="nature-card rounded-2xl p-4 shadow-sm">
+        {weather ? (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="text-4xl">{getWeatherEmoji(weather.weatherCode)}</div>
+                <div>
+                  <p className="text-3xl font-bold text-[#1a2e1a]">{Math.round(weather.temperature)}°</p>
+                  <p className="text-sm text-[#8b9e82]">{weather.description}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-[#8b9e82]">湿度 {weather.humidity}%</p>
+                <p className="text-sm text-[#8b9e82]">风速 {weather.windSpeed}m/s</p>
+              </div>
+            </div>
+            {/* 农事建议标签 */}
+            <div className="flex gap-2 flex-wrap">
+              {getFarmingAdvice(weather).map((advice, i) => (
+                <span key={i} className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded-full border border-green-200">
+                  {advice}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-6">
+            <div className="w-8 h-8 border-2 border-green-200 border-t-green-500 rounded-full animate-spin"></div>
+            <p className="mt-3 text-sm text-[#8b9e82]">加载天气...</p>
           </div>
-        </div>
+        )}
+      </div>
 
-        <div className="relative h-52 rounded-3xl overflow-hidden nature-card nature-card-hover animate-fade-in-up delay-200" style={{ opacity: 0 }}>
-          <Image src="/images/market-vegetables.jpg" alt="市场行情" fill className="img-cover" />
-          <div className="card-overlay absolute inset-0" />
-          <div className="absolute bottom-0 left-0 right-0 p-6">
-            <h2 className="text-xl font-bold text-white">市场行情</h2>
-            <p className="text-white/70 text-sm mt-1">实时农产品批发价格</p>
+      {/* 今日任务卡片 */}
+      <div className="nature-card rounded-2xl p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-[#1a2e1a]">今日任务</h3>
+            <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+              {tasks.filter(t => !t.done).length}项待办
+            </span>
           </div>
+          <span 
+            className="text-sm text-green-600 cursor-pointer active:opacity-60 transition-opacity" 
+            onClick={() => setActiveTab(3)}
+          >
+            查看全部 →
+          </span>
         </div>
-
-        <div className="relative h-52 rounded-3xl overflow-hidden nature-card nature-card-hover animate-fade-in-up delay-300" style={{ opacity: 0 }}>
-          <Image src="/images/weather-sky.jpg" alt="天气服务" fill className="img-cover" />
-          <div className="card-overlay absolute inset-0" />
-          <div className="absolute bottom-0 left-0 right-0 p-6">
-            <h2 className="text-xl font-bold text-white">天气服务</h2>
-            <p className="text-white/70 text-sm mt-1">精准气象数据助力农事</p>
-          </div>
+        <div className="space-y-2">
+          {tasks.filter(t => !t.done).slice(0, 3).map(task => (
+            <div key={task.id} className="flex items-center gap-3 py-2 border-b border-[#e2e8d8] last:border-0">
+              <input
+                type="checkbox"
+                checked={task.done}
+                onChange={() => toggleTask(task.id)}
+                className="w-5 h-5 rounded border-green-300 text-green-600 focus:ring-green-500 cursor-pointer"
+              />
+              <span className="text-sm text-[#4a6741]">
+                {getCategoryIcon(task.category)} {task.text}
+              </span>
+            </div>
+          ))}
+          {tasks.filter(t => !t.done).length === 0 && (
+            <p className="text-center text-[#8b9e82] py-4 text-sm">今日任务已全部完成 🎉</p>
+          )}
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 animate-fade-in-up delay-400" style={{ opacity: 0 }}>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <p className="text-2xl font-bold text-green-gradient">{tasks.filter((t) => !t.done).length}</p>
-          <p className="text-xs text-[#8b9e82] mt-1">待办任务</p>
-        </div>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <p className="text-2xl font-bold text-earth-gradient">{marketData.length}</p>
-          <p className="text-xs text-[#8b9e82] mt-1">行情品种</p>
-        </div>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <p className="text-2xl font-bold text-warm-gradient">{weather ? `${weather.temperature}℃` : "--"}</p>
-          <p className="text-xs text-[#8b9e82] mt-1">当前温度</p>
-        </div>
+      {/* 快捷操作 */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { icon: '🌱', label: '种植规划', tab: 1 },
+          { icon: '📊', label: '市场行情', tab: 2 },
+          { icon: '📷', label: '拍照识别', tab: 4 },
+          { icon: '🤖', label: 'AI助手', tab: 4 },
+        ].map((item, i) => (
+          <button
+            key={i}
+            onClick={() => setActiveTab(item.tab)}
+            className="nature-card p-3 flex flex-col items-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-sm rounded-2xl"
+          >
+            <span className="text-2xl">{item.icon}</span>
+            <span className="text-xs text-[#4a6741]">{item.label}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Market Ticker */}
+      {/* 市场动态 */}
       {marketData.length > 0 && (
-        <div className="nature-card rounded-2xl p-5 animate-fade-in-up delay-500" style={{ opacity: 0 }}>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-[#1a2e1a]">实时行情</h3>
-            <button onClick={() => setActiveTab(2)} className="text-sm font-medium text-green-gradient cursor-pointer active:opacity-60 transition-all duration-200">
-              查看详情 ›
-            </button>
+        <div className="nature-card rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-[#1a2e1a]">市场动态</h3>
+            <span 
+              className="text-sm text-green-600 cursor-pointer active:opacity-60 transition-opacity" 
+              onClick={() => setActiveTab(2)}
+            >
+              查看更多 →
+            </span>
           </div>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
-            {marketData.slice(0, 8).map((item) => (
-              <div key={item.name} className="flex-shrink-0 text-center min-w-[60px]">
-                <span className="text-lg">{item.emoji}</span>
-                <p className="text-xs text-[#8b9e82] mt-1">{item.name}</p>
-                <p className="text-sm font-semibold text-[#1a2e1a]">{item.price}元</p>
-                <p className={`text-xs ${item.trend === "up" ? "text-red-500" : item.trend === "down" ? "text-green-600" : "text-[#8b9e82]"}`}>
-                  {item.trend === "up" ? "↑" : item.trend === "down" ? "↓" : "→"} {item.change || ""}
-                </p>
+          <div className="space-y-2">
+            {marketData.slice(0, 3).map((item, i) => (
+              <div key={i} className="flex items-center justify-between py-2 border-b border-[#e2e8d8] last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{item.emoji}</span>
+                  <span className="text-sm text-[#4a6741]">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-[#1a2e1a]">¥{item.price.toFixed(2)}</span>
+                  <span className={
+                    item.trend === 'up' 
+                      ? 'text-red-500 text-sm' 
+                      : item.trend === 'down' 
+                        ? 'text-green-500 text-sm' 
+                        : 'text-gray-400 text-sm'
+                  }>
+                    {item.trend === 'up' ? '↑' : item.trend === 'down' ? '↓' : '−'}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Today's Tasks */}
-      <div className="nature-card rounded-2xl p-5 animate-fade-in-up delay-600" style={{ opacity: 0 }}>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-[#1a2e1a]">今日任务</h3>
-          <button onClick={() => setActiveTab(3)} className="text-sm font-medium text-green-gradient cursor-pointer active:opacity-60 transition-all duration-200">
-            全部 ›
-          </button>
-        </div>
-        <div className="space-y-3">
-          {tasks.slice(0, 3).map((task) => (
-            <div key={task.id} className="flex items-center gap-3">
-              <button
-                onClick={() => toggleTask(task.id)}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 ${
-                  task.done ? "bg-green-500 border-green-500" : "border-[#e2e8d8]"
-                }`}
-              >
-                {task.done && <span className="text-white text-xs">✓</span>}
-              </button>
-              <span className={`text-sm ${task.done ? "line-through text-[#8b9e82]" : "text-[#4a6741]"}`}>
-                {getCategoryIcon(task.category)} {task.text}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* AI Tip */}
-      <div className="nature-card rounded-2xl p-5 animate-fade-in-up delay-700" style={{ opacity: 0 }}>
+      {/* 农事小贴士 */}
+      <div className="nature-card rounded-2xl p-4 shadow-sm">
         <div className="flex items-start gap-3">
           <span className="text-2xl">💡</span>
           <div>
-            <h3 className="text-sm font-bold text-[#1a2e1a]">今日农事小贴士</h3>
+            <h3 className="text-sm font-semibold text-[#1a2e1a]">今日农事小贴士</h3>
             <p className="text-xs text-[#8b9e82] mt-1">
-              {getProverb()}。当前季节建议关注田间水肥管理，合理规划种植结构，提高土地利用率和经济效益。
+              {getProverb()}。当前季节建议关注田间水肥管理，合理规划种植结构。
             </p>
           </div>
         </div>
@@ -1294,378 +1435,398 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     const soilTypes = ["黑土", "壤土", "黏土", "红壤", "黄土", "砂土"];
     const terrains = ["平原", "山地", "丘陵", "坡地"];
 
+    const stepTitles = ["土地信息", "天气分析", "AI分析", "规划结果"];
+    const stepIcons = ["🌾", "🌤️", "🚀", "📊"];
+
+    // 判断步骤是否完成
+    const isStepComplete = (s: number) => s < step;
+    // 判断步骤是否可展开（已完成的步骤可以回看）
+    const canExpand = (s: number) => s < step || s === step;
+
     return (
-      <div className="animate-fade-in-up space-y-5 pb-4">
-        {/* Step Indicator */}
-        <div className="flex items-center justify-center gap-0 py-6">
+      <div className="animate-fade-in-up space-y-4 pb-4">
+        {/* 进度条 */}
+        <div className="nature-card rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-semibold text-[#1a2e1a]">规划进度</span>
+            <span className="text-xs text-[#8b9e82]">{step} / 4 步</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-500"
+              style={{ width: `${(step / 4) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* 步骤卡片列表 */}
+        <div className="space-y-3">
           {[1, 2, 3, 4].map((s) => (
-            <div key={s} className="flex items-center">
-              <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-500 ${
-                  s < step
-                    ? "bg-green-500 text-white"
-                    : s === step
-                    ? "border-2 border-green-500 text-green-600 animate-gentle-pulse bg-white"
-                    : "bg-gray-100 text-gray-400"
-                }`}
+            <div key={s} className="nature-card rounded-2xl shadow-sm overflow-hidden">
+              {/* 步骤头部 - 可点击展开/收起 */}
+              <button
+                onClick={() => {
+                  if (canExpand(s)) {
+                    setExpandedStep(expandedStep === s ? null : s);
+                  }
+                }}
+                disabled={!canExpand(s)}
+                className={`w-full p-4 flex items-center justify-between ${
+                  canExpand(s) ? "cursor-pointer active:bg-green-50" : "cursor-not-allowed opacity-50"
+                } transition-colors`}
               >
-                {s < step ? "✓" : s}
-              </div>
-              {s < 4 && (
-                <div className={`w-16 h-0.5 transition-all duration-500 ${s < step ? "bg-green-300" : "bg-gray-200"}`} />
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
+                    isStepComplete(s) 
+                      ? "bg-green-500 text-white" 
+                      : s === step 
+                        ? "bg-green-100 text-green-600 border-2 border-green-300" 
+                        : "bg-gray-100 text-gray-400"
+                  }`}>
+                    {isStepComplete(s) ? "✓" : stepIcons[s - 1]}
+                  </div>
+                  <div className="text-left">
+                    <p className={`font-semibold ${isStepComplete(s) || s === step ? "text-[#1a2e1a]" : "text-gray-400"}`}>
+                      第{s}步：{stepTitles[s - 1]}
+                    </p>
+                    <p className="text-xs text-[#8b9e82]">
+                      {isStepComplete(s) ? "已完成" : s === step ? "进行中" : "待完成"}
+                    </p>
+                  </div>
+                </div>
+                {canExpand(s) && (
+                  <span className={`text-[#8b9e82] transition-transform duration-300 ${expandedStep === s ? "rotate-180" : ""}`}>
+                    ▼
+                  </span>
+                )}
+              </button>
+
+              {/* 步骤内容 - 可折叠 */}
+              {(expandedStep === s || s === step) && canExpand(s) && (
+                <div className="px-4 pb-4 border-t border-[#e2e8d8] animate-fade-in">
+                  {/* Step 1: Land Info */}
+                  {s === 1 && (
+                    <div className="space-y-4 pt-4">
+                      {/* Quick Plan */}
+                      <button
+                        onClick={handleQuickPlan}
+                        className="btn-primary w-full ripple-container flex items-center justify-center gap-2"
+                      >
+                        <span className="text-lg">✨</span>
+                        一键规划
+                      </button>
+                      <p className="text-xs text-[#8b9e82] text-center -mt-2">自动填充默认参数，快速开始</p>
+
+                      {/* Land Area */}
+                      <div>
+                        <label className="text-sm font-semibold text-[#1a2e1a] block mb-2">土地面积（亩）</label>
+                        <input
+                          type="number"
+                          value={landArea}
+                          onChange={(e) => setLandArea(e.target.value)}
+                          placeholder="请输入土地面积"
+                          className="input-nature"
+                        />
+                      </div>
+
+                      {/* Image Upload */}
+                      <div>
+                        <label className="text-sm font-semibold text-[#1a2e1a] block mb-2">拍照识别</label>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handleImageUpload}
+                          className="hidden"
+                        />
+                        {imagePreview ? (
+                          <div className="relative">
+                            <img src={imagePreview} alt="预览" className="w-full h-40 object-cover rounded-xl" />
+                            <button
+                              onClick={() => { setImagePreview(null); setImageBase64(null); }}
+                              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 backdrop-blur-md text-white text-xs cursor-pointer flex items-center justify-center"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="w-full border-2 border-dashed border-[#e2e8d8] rounded-xl py-8 text-center cursor-pointer hover:border-green-300 hover:bg-green-50/50 transition-all"
+                          >
+                            <span className="text-2xl">📷</span>
+                            <span className="text-sm text-[#8b9e82] mt-2 block">点击拍照或上传土地照片</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Land Type */}
+                      <div>
+                        <label className="text-sm font-semibold text-[#1a2e1a] block mb-2">土地类型</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {landTypes.map((lt) => (
+                            <button
+                              key={lt}
+                              onClick={() => setLandType(lt)}
+                              className={`p-2.5 rounded-xl text-center cursor-pointer transition-all ${
+                                landType === lt
+                                  ? "bg-green-50 text-green-700 border border-green-300"
+                                  : "bg-[#f8faf5] border border-[#e2e8d8] hover:bg-green-50/50"
+                              }`}
+                            >
+                              <span className="text-lg block">{getLandIcon(lt)}</span>
+                              <span className="text-xs mt-0.5 block">{lt}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Soil Type */}
+                      <div>
+                        <label className="text-sm font-semibold text-[#1a2e1a] block mb-2">土壤类型</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {soilTypes.map((st) => (
+                            <button
+                              key={st}
+                              onClick={() => setSoilType(st)}
+                              className={`p-2.5 rounded-xl text-center cursor-pointer transition-all ${
+                                soilType === st
+                                  ? "bg-green-50 text-green-700 border border-green-300"
+                                  : "bg-[#f8faf5] border border-[#e2e8d8] hover:bg-green-50/50"
+                              }`}
+                            >
+                              <span className="text-lg block">{getSoilIcon(st)}</span>
+                              <span className="text-xs mt-0.5 block">{st}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Terrain */}
+                      <div>
+                        <label className="text-sm font-semibold text-[#1a2e1a] block mb-2">地形</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {terrains.map((t) => (
+                            <button
+                              key={t}
+                              onClick={() => setTerrain(t)}
+                              className={`p-2 rounded-xl text-center cursor-pointer transition-all text-xs ${
+                                terrain === t
+                                  ? "bg-green-500 text-white"
+                                  : "bg-[#f8faf5] border border-[#e2e8d8] hover:bg-green-50/50"
+                              }`}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {step === 1 && (
+                        <button
+                          onClick={() => { setStep(2); setExpandedStep(2); }}
+                          className="btn-primary w-full ripple-container mt-2"
+                        >
+                          下一步 →
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 2: Weather & Analyze */}
+                  {s === 2 && (
+                    <div className="space-y-4 pt-4">
+                      <button
+                        onClick={handleGetGPS}
+                        disabled={gpsLoading}
+                        className="btn-secondary w-full ripple-container flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {gpsLoading ? (
+                          <>
+                            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            正在获取位置...
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-lg">📍</span>
+                            获取GPS定位和天气
+                          </>
+                        )}
+                      </button>
+                      {gpsError && <p className="text-xs text-red-500 text-center">{gpsError}</p>}
+
+                      {plantingWeather && (
+                        <div className="bg-gradient-to-r from-sky-50 to-blue-50 rounded-xl p-4 border border-sky-100">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-3xl">{getWeatherEmoji(plantingWeather.weatherCode)}</span>
+                              <div>
+                                <p className="text-2xl font-bold text-[#1a2e1a]">{plantingWeather.temperature}℃</p>
+                                <p className="text-xs text-[#8b9e82]">{plantingWeather.description}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-center">
+                            <div className="bg-white/50 rounded-lg p-2">
+                              <p className="text-xs text-[#8b9e82]">平均温度</p>
+                              <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.avgTemperature}℃</p>
+                            </div>
+                            <div className="bg-white/50 rounded-lg p-2">
+                              <p className="text-xs text-[#8b9e82]">预计降水</p>
+                              <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.totalPrecipitation}mm</p>
+                            </div>
+                            <div className="bg-white/50 rounded-lg p-2">
+                              <p className="text-xs text-[#8b9e82]">土壤湿度</p>
+                              <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.avgSoilMoisture}%</p>
+                            </div>
+                          </div>
+                          <p className="text-xs text-[#8b9e82] mt-2">
+                            季节：{plantingWeather.season} · 适宜：{plantingWeather.suitableCrops.slice(0, 3).join("、")}
+                          </p>
+                        </div>
+                      )}
+
+                      {step === 2 && (
+                        <button
+                          onClick={handleAnalyze}
+                          className="btn-primary w-full ripple-container flex items-center justify-center gap-2"
+                        >
+                          <span className="text-lg">🚀</span>
+                          开始AI分析
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 3: Loading */}
+                  {s === 3 && (
+                    <div className="flex flex-col items-center justify-center py-8">
+                      {step === 3 ? (
+                        <>
+                          <div className="relative">
+                            <div className="w-16 h-16 border-4 border-green-100 border-t-green-500 rounded-full animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="text-xl">🌾</span>
+                            </div>
+                          </div>
+                          <p className="text-[#1a2e1a] mt-4 font-semibold">AI正在分析中...</p>
+                          <p className="text-xs text-[#8b9e82] mt-1">正在综合分析土地、天气和市场数据</p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-green-600 font-medium">✓ 分析已完成</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 4: Results */}
+                  {s === 4 && recommendation && (
+                    <div className="space-y-4 pt-4">
+                      {/* 分析成功提示 */}
+                      <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center">
+                            <span className="text-white text-lg">✓</span>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-[#1a2e1a]">分析完成</p>
+                            <p className="text-xs text-[#8b9e82]">
+                              推荐 {((recommendation.recommendations as CropRecommendation[]) || []).length} 种作物
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 土地概况 */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                          <p className="text-xs text-[#8b9e82]">土地类型</p>
+                          <p className="text-sm font-semibold text-[#1a2e1a]">{getLandIcon(landType || "旱地")} {landType || "旱地"}</p>
+                        </div>
+                        <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                          <p className="text-xs text-[#8b9e82]">土壤类型</p>
+                          <p className="text-sm font-semibold text-[#1a2e1a]">{getSoilIcon(soilType || "壤土")} {soilType || "壤土"}</p>
+                        </div>
+                        <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                          <p className="text-xs text-[#8b9e82]">地形</p>
+                          <p className="text-sm font-semibold text-[#1a2e1a]">{terrain || "平原"}</p>
+                        </div>
+                        <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                          <p className="text-xs text-[#8b9e82]">面积</p>
+                          <p className="text-sm font-semibold text-[#1a2e1a]">{landArea || "10"}亩</p>
+                        </div>
+                      </div>
+
+                      {/* 推荐作物 */}
+                      <div>
+                        <p className="text-sm font-semibold text-[#1a2e1a] mb-2">推荐作物排名</p>
+                        <div className="space-y-2">
+                          {((recommendation.recommendations as CropRecommendation[]) || []).slice(0, 3).map((crop, idx) => (
+                            <div
+                              key={crop.name}
+                              className={`rounded-xl p-3 ${
+                                idx === 0 
+                                  ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white" 
+                                  : idx === 1 
+                                    ? "bg-gradient-to-r from-amber-400 to-amber-500 text-white"
+                                    : "bg-gradient-to-r from-sky-400 to-sky-500 text-white"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">{getCropEmoji(crop.name)}</span>
+                                  <span className="font-semibold">
+                                    {idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉"} {crop.name}
+                                  </span>
+                                </div>
+                                <span className="text-sm font-bold">{crop.score}分</span>
+                              </div>
+                              <p className="text-xs mt-1 opacity-80">预计收益：{crop.profitPerMu}元/亩</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 收益预估 */}
+                      <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl p-4 text-white">
+                        <p className="text-white/70 text-sm">收益预估</p>
+                        <p className="text-3xl font-bold mt-1">
+                          {String(((recommendation.summary as Record<string, unknown>)?.bestChoice as Record<string, unknown>)?.profitPerMu || 0)}元/亩
+                        </p>
+                        <p className="text-sm text-white/70 mt-1">
+                          最佳选择：{String(((recommendation.summary as Record<string, unknown>)?.bestChoice as Record<string, unknown>)?.name || "-")}
+                        </p>
+                      </div>
+
+                      {/* 操作按钮 */}
+                      {step === 4 && (
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => { setShowShareToast(true); setTimeout(() => setShowShareToast(false), 2000); }}
+                            className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2"
+                          >
+                            <span>📤</span>
+                            分享方案
+                          </button>
+                          <button
+                            onClick={() => { setStep(1); setRecommendation(null); setExpandedStep(1); }}
+                            className="btn-outline flex-1"
+                          >
+                            ← 重新规划
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ))}
         </div>
 
-        {/* Step 1: Land Info */}
-        {step === 1 && (
-          <div className="space-y-5 animate-fade-in">
-            {/* Quick Plan */}
-            <div className="nature-card rounded-2xl p-5">
-              <button
-                onClick={handleQuickPlan}
-                className="btn-primary w-full ripple-container flex items-center justify-center gap-2"
-              >
-                <span className="text-lg">✨</span>
-                一键规划
-              </button>
-              <p className="text-xs text-[#8b9e82] text-center mt-2">自动填充默认参数，快速开始</p>
-            </div>
-
-            {/* Land Area */}
-            <div className="nature-card rounded-2xl p-5">
-              <label className="text-sm font-semibold text-[#1a2e1a] block mb-3">土地面积（亩）</label>
-              <input
-                type="number"
-                value={landArea}
-                onChange={(e) => setLandArea(e.target.value)}
-                placeholder="请输入土地面积"
-                className="input-nature"
-              />
-            </div>
-
-            {/* Image Upload */}
-            <div className="nature-card rounded-2xl p-5">
-              <label className="text-sm font-semibold text-[#1a2e1a] block mb-3">拍照识别</label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-              {imagePreview ? (
-                <div className="relative">
-                  <img src={imagePreview} alt="预览" className="w-full h-44 object-cover rounded-2xl" />
-                  <button
-                    onClick={() => {
-                      setImagePreview(null);
-                      setImageBase64(null);
-                    }}
-                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md text-white text-xs cursor-pointer flex items-center justify-center active:scale-[0.9] transition-all duration-200 hover:bg-black/60"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-[#e2e8d8] rounded-2xl py-12 text-center cursor-pointer hover:border-green-300 hover:bg-green-50/50 active:scale-[0.98] transition-all duration-200 group"
-                >
-                  <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center mx-auto group-hover:bg-green-100 transition-all duration-200">
-                    <span className="text-2xl">📷</span>
-                  </div>
-                  <span className="text-sm text-[#8b9e82] mt-3 block font-medium">点击拍照或上传土地照片</span>
-                  <span className="text-xs text-[#8b9e82] mt-1 block">支持 JPG、PNG 格式</span>
-                </button>
-              )}
-            </div>
-
-            {/* Land Type */}
-            <div className="nature-card rounded-2xl p-5">
-              <label className="text-sm font-semibold text-[#1a2e1a] block mb-3">土地类型</label>
-              <div className="grid grid-cols-3 gap-2">
-                {landTypes.map((lt) => (
-                  <button
-                    key={lt}
-                    onClick={() => setLandType(lt)}
-                    className={`p-3.5 rounded-2xl text-center cursor-pointer transition-all duration-200 active:scale-[0.95] ${
-                      landType === lt
-                        ? "bg-green-50 text-green-700 border border-green-300 shadow-[0_2px_8px_rgba(34,197,94,0.1)] scale-[1.02]"
-                        : "bg-[#f8faf5] border border-[#e2e8d8] hover:bg-green-50/50"
-                    }`}
-                  >
-                    <span className="text-xl block">{getLandIcon(lt)}</span>
-                    <span className="text-xs mt-1 block">{lt}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Soil Type */}
-            <div className="nature-card rounded-2xl p-5">
-              <label className="text-sm font-semibold text-[#1a2e1a] block mb-3">土壤类型</label>
-              <div className="grid grid-cols-3 gap-2">
-                {soilTypes.map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => setSoilType(st)}
-                    className={`p-3.5 rounded-2xl text-center cursor-pointer transition-all duration-200 active:scale-[0.95] ${
-                      soilType === st
-                        ? "bg-green-50 text-green-700 border border-green-300 shadow-[0_2px_8px_rgba(34,197,94,0.1)] scale-[1.02]"
-                        : "bg-[#f8faf5] border border-[#e2e8d8] hover:bg-green-50/50"
-                    }`}
-                  >
-                    <span className="text-xl block">{getSoilIcon(st)}</span>
-                    <span className="text-xs mt-1 block">{st}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Terrain */}
-            <div className="nature-card rounded-2xl p-5">
-              <label className="text-sm font-semibold text-[#1a2e1a] block mb-3">地形</label>
-              <div className="grid grid-cols-4 gap-2">
-                {terrains.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTerrain(t)}
-                    className={`p-3.5 rounded-2xl text-center cursor-pointer transition-all duration-200 active:scale-[0.95] ${
-                      terrain === t
-                        ? "btn-pill-active"
-                        : "btn-pill-inactive"
-                    }`}
-                  >
-                    <span className="text-xs">{t}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <button
-              onClick={() => setStep(2)}
-              className="btn-primary w-full ripple-container"
-            >
-              下一步 →
-            </button>
-          </div>
-        )}
-
-        {/* Step 2: Weather & Analyze */}
-        {step === 2 && (
-          <div className="space-y-5 animate-fade-in">
-            <div className="nature-card rounded-2xl p-5">
-              <button
-                onClick={handleGetGPS}
-                disabled={gpsLoading}
-                className="btn-secondary w-full ripple-container flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {gpsLoading ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    正在获取位置...
-                  </>
-                ) : (
-                  <>
-                    <span className="text-lg">📍</span>
-                    获取GPS定位和天气
-                  </>
-                )}
-              </button>
-              {gpsError && <p className="text-xs text-red-500 text-center mt-2">{gpsError}</p>}
-            </div>
-
-            {plantingWeather && (
-              <div className="relative h-56 rounded-3xl overflow-hidden">
-                <Image src="/images/weather-sky.jpg" alt="天气" fill className="img-cover" />
-                <div className="hero-overlay absolute inset-0" />
-                <div className="absolute inset-0 p-5 flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-white/70 text-sm">当前天气</p>
-                      <p className="text-3xl font-bold text-white mt-1">{plantingWeather.temperature}℃</p>
-                      <p className="text-white/70 text-sm mt-1">{plantingWeather.description}</p>
-                    </div>
-                    <span className="text-5xl animate-float">{getWeatherEmoji(plantingWeather.weatherCode)}</span>
-                  </div>
-                  <div className="nature-card rounded-2xl p-4">
-                    <div className="grid grid-cols-3 gap-3 text-center">
-                      <div>
-                        <p className="text-xs text-[#8b9e82]">平均温度</p>
-                        <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.avgTemperature}℃</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-[#8b9e82]">预计降水</p>
-                        <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.totalPrecipitation}mm</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-[#8b9e82]">土壤湿度</p>
-                        <p className="text-sm font-semibold text-[#1a2e1a]">{plantingWeather.avgSoilMoisture}%</p>
-                      </div>
-                    </div>
-                    <p className="text-xs text-[#8b9e82] mt-3">
-                      季节：{plantingWeather.season} · 适宜作物：{plantingWeather.suitableCrops.slice(0, 5).join("、")}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={handleAnalyze}
-              className="btn-primary w-full ripple-container flex items-center justify-center gap-2"
-            >
-              <span className="text-lg">🚀</span>
-              开始AI分析
-            </button>
-          </div>
-        )}
-
-        {/* Step 3: Loading */}
-        {step === 3 && (
-          <div className="flex flex-col items-center justify-center py-24 animate-fade-in">
-            <div className="relative">
-              <div className="w-20 h-20 border-4 border-green-100 border-t-green-500 rounded-full animate-spin" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-2xl">🌾</span>
-              </div>
-            </div>
-            <p className="text-[#1a2e1a] mt-6 font-semibold text-lg">AI正在分析中...</p>
-            <p className="text-sm text-[#8b9e82] mt-2">正在综合分析土地、天气和市场数据</p>
-          </div>
-        )}
-
-        {/* Step 4: Results */}
-        {step === 4 && recommendation && (
-          <div className="space-y-5 animate-fade-in">
-            {/* Land Summary */}
-            <div className="nature-card rounded-2xl p-5">
-              <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">土地概况</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-green-50 rounded-2xl p-3 border border-green-100">
-                  <p className="text-xs text-[#8b9e82]">土地类型</p>
-                  <p className="text-sm font-semibold text-[#1a2e1a] mt-1">{getLandIcon(landType || "旱地")} {landType || "旱地"}</p>
-                </div>
-                <div className="bg-green-50 rounded-2xl p-3 border border-green-100">
-                  <p className="text-xs text-[#8b9e82]">土壤类型</p>
-                  <p className="text-sm font-semibold text-[#1a2e1a] mt-1">{getSoilIcon(soilType || "壤土")} {soilType || "壤土"}</p>
-                </div>
-                <div className="bg-green-50 rounded-2xl p-3 border border-green-100">
-                  <p className="text-xs text-[#8b9e82]">地形</p>
-                  <p className="text-sm font-semibold text-[#1a2e1a] mt-1">{terrain || "平原"}</p>
-                </div>
-                <div className="bg-green-50 rounded-2xl p-3 border border-green-100">
-                  <p className="text-xs text-[#8b9e82]">面积</p>
-                  <p className="text-sm font-semibold text-[#1a2e1a] mt-1">{landArea || "10"}亩</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Recommendations */}
-            <div className="nature-card rounded-2xl p-5">
-              <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">推荐作物排名</h3>
-              <div className="space-y-3">
-                {((recommendation.recommendations as CropRecommendation[]) || []).slice(0, 5).map((crop, idx) => {
-                  const rankColors = [
-                    "from-green-500 to-emerald-600",
-                    "from-amber-400 to-amber-500",
-                    "from-sky-400 to-sky-500",
-                    "",
-                    "",
-                  ];
-                  return (
-                    <div
-                      key={crop.name}
-                      className={`rounded-2xl p-4 border transition-all duration-200 ${
-                        idx < 3
-                          ? `bg-gradient-to-r ${rankColors[idx]} text-white border-transparent shadow-lg`
-                          : "bg-white border-[#e2e8d8]"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{getCropEmoji(crop.name)}</span>
-                          <span className={`font-semibold ${idx < 3 ? "text-white" : "text-[#1a2e1a]"}`}>
-                            {idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`} {crop.name}
-                          </span>
-                        </div>
-                        <span
-                          className={`text-xs px-2.5 py-1 rounded-full border ${
-                            idx < 3
-                              ? "bg-white/20 text-white border-white/30"
-                              : getMatchStyle(crop.matchLevel)
-                          }`}
-                        >
-                          {getMatchLabel(crop.matchLevel)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1">
-                          <div className={`h-2.5 rounded-full ${idx < 3 ? "bg-white/30" : "bg-green-100"}`}>
-                            <div
-                              className={`h-2.5 rounded-full transition-all duration-1000 ${idx < 3 ? "bg-white" : "bg-green-500"}`}
-                              style={{ width: `${crop.score}%` }}
-                            />
-                          </div>
-                        </div>
-                        <span className={`text-sm font-bold ${idx < 3 ? "text-white" : "text-green-gradient"}`}>
-                          {crop.score}分
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-2 ${idx < 3 ? "text-white/80" : "text-[#8b9e82]"}`}>
-                        预计收益：{crop.profitPerMu}元/亩
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Revenue Estimate */}
-            <div className="relative h-40 rounded-3xl overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-600" />
-              <div className="absolute inset-0 p-5 flex flex-col justify-center">
-                <h3 className="text-white/70 font-medium">收益预估</h3>
-                <p className="text-4xl font-bold text-white mt-2 animate-count-up">
-                  {String(((recommendation.summary as Record<string, unknown>)?.bestChoice as Record<string, unknown>)?.profitPerMu || 0)}元/亩
-                </p>
-                <p className="text-sm text-white/70 mt-2">
-                  最佳选择：{String(((recommendation.summary as Record<string, unknown>)?.bestChoice as Record<string, unknown>)?.name || "-")}
-                </p>
-                <button
-                  onClick={() => setActiveTab(4)}
-                  className="mt-3 bg-white/20 backdrop-blur-md text-white py-2 px-5 rounded-full text-sm font-medium cursor-pointer w-fit active:scale-[0.95] transition-all duration-200 hover:bg-white/30"
-                >
-                  查看详细分析
-                </button>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setShowShareToast(true); setTimeout(() => setShowShareToast(false), 2000); }}
-                className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2"
-              >
-                <span>📤</span>
-                分享方案
-              </button>
-              <button
-                onClick={() => { setStep(1); setRecommendation(null); }}
-                className="btn-outline flex-1"
-              >
-                ← 重新规划
-              </button>
-            </div>
-
-            {showShareToast && (
-              <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 toast-nature text-[#1a2e1a] px-8 py-4 rounded-2xl text-sm animate-scale-in z-50">
-                分享链接已复制到剪贴板
-              </div>
-            )}
+        {showShareToast && (
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 toast-nature text-[#1a2e1a] px-8 py-4 rounded-2xl text-sm animate-scale-in z-50">
+            分享链接已复制到剪贴板
           </div>
         )}
       </div>
@@ -1674,186 +1835,183 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
 
   // ==================== Tab 2: Market (Nature Fresh) ====================
 
-  const renderMarket = () => (
-    <div className="animate-fade-in-up space-y-5 pb-4">
-      {/* Market Header */}
-      <div className="relative h-48 rounded-3xl overflow-hidden">
-        <Image src="/images/market-vegetables.jpg" alt="市场" fill className="img-cover" />
-        <div className="hero-overlay absolute inset-0" />
-        <div className="absolute bottom-0 left-0 right-0 p-6">
-          <p className="text-white/70 text-sm">农产品批发价格指数</p>
-          <p className="text-4xl font-bold text-white mt-1">{marketFull?.index || "100.00"}</p>
-          <div className="flex gap-3 mt-3">
-            <span className="text-xs nature-card px-3 py-1 rounded-full text-red-500">
-              ↑ 涨 {marketFull?.upCount || 0}
+  const renderMarket = () => {
+    const categories = ["全部", "蔬菜", "水果", "粮食"];
+    const categoryEmojis: Record<string, string[]> = {
+      "蔬菜": ["🥬", "🥒", "🌶️", "🥕", "🧄", "🥔", "🍅", "🍆"],
+      "水果": ["🍎", "🍊", "🍋", "🍇", "🍉", "🍓", "🍑", "🍒"],
+      "粮食": ["🌾", "🌽", "🫘", "🥜", "🍠", "🍚", "🌿", "🌾"],
+    };
+
+    const getFilteredItems = () => {
+      if (!marketFull?.items) return [];
+      if (marketTab === 0) return marketFull.items;
+      const categoryName = categories[marketTab];
+      const targetEmojis = categoryEmojis[categoryName] || [];
+      return marketFull.items.filter(item => targetEmojis.includes(item.emoji || ""));
+    };
+
+    const filteredItems = getFilteredItems();
+
+    return (
+      <div className="animate-fade-in-up space-y-4 pb-4">
+        {/* 顶部概览卡片 */}
+        <div className="nature-card p-4 bg-gradient-to-br from-green-500 to-emerald-600 text-white rounded-3xl">
+          <p className="text-sm opacity-90">农产品价格指数</p>
+          <div className="flex items-end gap-2 mt-1">
+            <span className="text-4xl font-bold">{marketFull?.index?.toFixed(2) || "100.00"}</span>
+            <span className={`${(marketFull?.indexChange || 0) >= 0 ? "text-red-200" : "text-green-200"} text-sm mb-1`}>
+              {(marketFull?.indexChange || 0) >= 0 ? "↑" : "↓"} {Math.abs(marketFull?.indexChange || 0).toFixed(2)}
             </span>
-            <span className="text-xs nature-card px-3 py-1 rounded-full text-green-600">
-              ↓ 跌 {marketFull?.downCount || 0}
+          </div>
+          <div className="flex gap-4 mt-3 text-sm">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-red-300"></span>
+              涨 {marketFull?.upCount || 0}
             </span>
-            <span className="text-xs nature-card px-3 py-1 rounded-full text-[#8b9e82]">
-              → 平 {marketFull?.stableCount || 0}
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-green-300"></span>
+              跌 {marketFull?.downCount || 0}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-white/50"></span>
+              平 {marketFull?.stableCount || 0}
             </span>
           </div>
         </div>
-      </div>
 
-      {/* Location Selector */}
-      <div className="nature-card rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-bold text-[#1a2e1a] flex items-center gap-2">
-            <LocationIcon size={16} className="text-green-500" />
-            选择地区
-          </h3>
-          <button
-            onClick={detectLocationFromGPS}
-            disabled={locationLoading}
-            className="text-xs font-medium text-sky-500 flex items-center gap-1 cursor-pointer active:opacity-60 transition-all duration-200"
-          >
-            {locationLoading ? (
-              <>
-                <span className="w-3 h-3 border-2 border-gray-200 border-t-sky-500 rounded-full animate-spin" />
-                定位中...
-              </>
-            ) : (
-              <>
-                <LocationIcon size={14} />
-                GPS定位
-              </>
-            )}
-          </button>
-        </div>
-        <select
-          value={userProvince}
-          onChange={(e) => setUserProvince(e.target.value)}
-          className="select-nature"
-        >
-          <option value="">全国（默认）</option>
-          {PROVINCES.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Price List */}
-      <div className="nature-card rounded-2xl p-5">
-        <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">价格行情</h3>
-        <div className="space-y-1">
-          {marketFull?.items.map((item) => (
-            <div
-              key={item.name}
-              className="flex items-center justify-between py-3 border-b border-[#e2e8d8] last:border-0 hover:bg-green-50/50 rounded-xl px-2 transition-all duration-200"
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-lg">{item.emoji}</span>
-                <span className="text-sm font-medium text-[#1a2e1a]">{item.name}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {renderSparkline(item.sparkline || [], item.trend)}
-                <span className="text-sm font-semibold text-[#1a2e1a] w-16 text-right tabular-nums">
-                  {item.price.toFixed(2)}
-                </span>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    item.trend === "up"
-                      ? "badge-up"
-                      : item.trend === "down"
-                      ? "badge-down"
-                      : "badge-stable"
-                  }`}
-                >
-                  {item.change || ""}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Price Chart */}
-      <div className="nature-card rounded-2xl p-5">
-        <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">价格走势图</h3>
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
-          {marketFull?.items.slice(0, 8).map((item) => (
+        {/* 分类筛选 */}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide px-1">
+          {categories.map((cat, i) => (
             <button
-              key={item.name}
-              onClick={() => setSelectedCrop(item.name)}
-              className={`btn-pill whitespace-nowrap ${
-                selectedCrop === item.name
-                  ? "btn-pill-active"
-                  : "btn-pill-inactive"
-              }`}
+              key={i}
+              onClick={() => setMarketTab(i)}
+              className={`btn-pill whitespace-nowrap ${marketTab === i ? "btn-pill-active" : "btn-pill-inactive"}`}
             >
-              {item.emoji} {item.name}
+              {cat}
             </button>
           ))}
         </div>
-        {renderPriceChart()}
-      </div>
 
-      {/* Briefings */}
-      {marketFull?.briefings && marketFull.briefings.length > 0 && (
-        <div className="nature-card rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">实时简报</h3>
-          <div className="space-y-3">
-            {marketFull.briefings.map((b, idx) => (
+        {/* 价格列表 */}
+        <div className="nature-card rounded-2xl divide-y divide-[#e2e8d8]">
+          {filteredItems.length === 0 ? (
+            <div className="p-8 text-center">
+              <div className="text-4xl mb-2">📊</div>
+              <p className="text-[#8b9e82]">暂无该分类数据</p>
+            </div>
+          ) : (
+            filteredItems.map((item, i) => (
               <div
-                key={idx}
-                className={`border-l-4 ${getBriefingBorderColor(b.type)} pl-4 py-2 rounded-r-xl bg-green-50/50`}
+                key={i}
+                className="p-4 flex items-center justify-between hover:bg-green-50/50 transition-all duration-200"
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm">{getBriefingIcon(b.type)}</span>
-                  <span className="text-xs font-semibold text-[#1a2e1a]">{b.title}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{item.emoji || "🌾"}</span>
+                  <div>
+                    <p className="font-medium text-[#1a2e1a]">{item.name}</p>
+                    <p className="text-xs text-[#8b9e82]">元/公斤</p>
+                  </div>
                 </div>
-                <p className="text-xs text-[#8b9e82] line-clamp-2">{b.content}</p>
-                <p className="text-xs text-[#8b9e82] mt-1">{b.time}</p>
+                <div className="flex items-center gap-3">
+                  {renderSparkline(item.sparkline || [], item.trend)}
+                  <div className="text-right">
+                    <p className="font-semibold text-[#1a2e1a]">¥{item.price.toFixed(2)}</p>
+                    <p className={`text-sm ${item.trend === "up" ? "text-red-500" : item.trend === "down" ? "text-green-500" : "text-gray-400"}`}>
+                      {item.change || "--"}
+                    </p>
+                  </div>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Macro Data */}
-      {marketFull?.macro && (
-        <div className="nature-card rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">宏观数据</h3>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="bg-sky-50 rounded-2xl p-3 text-center border border-sky-100">
-              <p className="text-xs text-sky-500">种植面积</p>
-              <p className="text-sm font-bold text-[#1a2e1a] mt-1">4.52亿亩</p>
-            </div>
-            <div className="bg-green-50 rounded-2xl p-3 text-center border border-green-100">
-              <p className="text-xs text-green-600">供需比</p>
-              <p className="text-sm font-bold text-[#1a2e1a] mt-1">1.05</p>
-            </div>
-            <div className="bg-amber-50 rounded-2xl p-3 text-center border border-amber-100">
-              <p className="text-xs text-amber-500">季节预测</p>
-              <p className="text-sm font-bold text-[#1a2e1a] mt-1">稳中有降</p>
-            </div>
-          </div>
-          {marketFull.macro.policyInfo && (
-            <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#1a2e1a]">政策信息</span>
-                <button className="btn-pill btn-pill-inactive text-[10px]">详情</button>
-              </div>
-              <p className="text-xs text-[#8b9e82] mt-1 line-clamp-2">{marketFull.macro.policyInfo}</p>
-            </div>
+            ))
           )}
         </div>
-      )}
 
-      {/* Data Source */}
-      <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200">
-        <h4 className="text-sm font-bold text-amber-700 mb-2">⚠️ 重要说明</h4>
-        <ul className="text-xs text-[#8b9e82] space-y-1">
-          <li>• 数据来源：农业农村部重点农产品市场信息平台</li>
-          <li>• 价格类型：<strong className="text-[#4a6741]">批发价格</strong>（非零售价格）</li>
-          <li>• 价格仅供参考，实际成交价格因地区和市场而异</li>
-          <li>• 更新时间：{marketFull?.updateTime || "每日更新"}</li>
-        </ul>
+        {/* 价格走势图 */}
+        <div className="nature-card rounded-2xl p-5">
+          <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">价格走势图</h3>
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
+            {marketFull?.items.slice(0, 8).map((item) => (
+              <button
+                key={item.name}
+                onClick={() => setSelectedCrop(item.name)}
+                className={`btn-pill whitespace-nowrap ${
+                  selectedCrop === item.name
+                    ? "btn-pill-active"
+                    : "btn-pill-inactive"
+                }`}
+              >
+                {item.emoji} {item.name}
+              </button>
+            ))}
+          </div>
+          {renderPriceChart()}
+        </div>
+
+        {/* 市场简报 */}
+        {marketFull?.briefings && marketFull.briefings.length > 0 && (
+          <div className="nature-card rounded-2xl p-4">
+            <h3 className="font-semibold text-[#1a2e1a] mb-3">市场简报</h3>
+            <div className="space-y-3">
+              {marketFull.briefings.slice(0, 3).map((brief, i) => (
+                <div key={i} className="p-3 bg-[#f8faf5] rounded-xl">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${
+                      brief.type === "政策" ? "bg-blue-100 text-blue-700" :
+                      brief.type === "行情" ? "bg-green-100 text-green-700" :
+                      brief.type === "预警" ? "bg-red-100 text-red-700" :
+                      "bg-amber-100 text-amber-700"
+                    }`}>
+                      {brief.type}
+                    </span>
+                    <span className="text-xs text-[#8b9e82]">{brief.time}</span>
+                  </div>
+                  <p className="text-sm text-[#1a2e1a]">{brief.title}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 宏观数据 */}
+        {marketFull?.macro && (
+          <div className="nature-card rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">宏观数据</h3>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="bg-sky-50 rounded-2xl p-3 text-center border border-sky-100">
+                <p className="text-xs text-sky-500">种植面积</p>
+                <p className="text-sm font-bold text-[#1a2e1a] mt-1">4.52亿亩</p>
+              </div>
+              <div className="bg-green-50 rounded-2xl p-3 text-center border border-green-100">
+                <p className="text-xs text-green-600">供需比</p>
+                <p className="text-sm font-bold text-[#1a2e1a] mt-1">1.05</p>
+              </div>
+              <div className="bg-amber-50 rounded-2xl p-3 text-center border border-amber-100">
+                <p className="text-xs text-amber-500">季节预测</p>
+                <p className="text-sm font-bold text-[#1a2e1a] mt-1">稳中有降</p>
+              </div>
+            </div>
+            {marketFull.macro.policyInfo && (
+              <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#1a2e1a]">政策信息</span>
+                  <button className="btn-pill btn-pill-inactive text-[10px]">详情</button>
+                </div>
+                <p className="text-xs text-[#8b9e82] mt-1 line-clamp-2">{marketFull.macro.policyInfo}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 数据来源 */}
+        <div className="text-center text-xs text-[#8b9e82] py-2">
+          数据来源：农业农村部重点农产品市场信息平台
+          <br />
+          更新时间：{marketFull?.updateTime || "--"}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ==================== Tab 3: Management (Nature Fresh) ====================
 
@@ -1867,19 +2025,64 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     const activityDays = activities.map((a) => a.day);
     const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
 
+    // 统计数据
+    const todayStr = getTodayStr();
+    const todayTasks = tasks.filter(t => t.date === todayStr || t.date === "今天");
+    const pendingTasks = tasks.filter(t => !t.done);
+    const completedTasks = tasks.filter(t => t.done);
+    const completionRate = tasks.length > 0 ? Math.round((completedTasks.length / tasks.length) * 100) : 0;
+
+    const handleAddTask = () => {
+      if (!newTask.trim()) return;
+      const newTaskItem: Task = {
+        id: Date.now().toString(),
+        text: newTask,
+        done: false,
+        date: todayStr,
+        category: newTaskCategory,
+        priority: newTaskPriority,
+      };
+      setTasks([...tasks, newTaskItem]);
+      saveToStorage(STORAGE_KEYS.tasks, [...tasks, newTaskItem]);
+      setNewTask("");
+      setNewTaskCategory("其他");
+      setNewTaskPriority("medium");
+      setShowAddTask(false);
+    };
+
     return (
-      <div className="animate-fade-in-up space-y-5 pb-4">
-        {/* Weather Banner */}
-        <div className="relative h-40 rounded-3xl overflow-hidden">
-          <Image src="/images/weather-sky.jpg" alt="天气" fill className="img-cover" />
-          <div className="hero-overlay absolute inset-0" />
-          <div className="absolute inset-0 flex flex-col justify-center p-6">
-            <p className="text-white/70 text-sm">农事谚语</p>
-            <p className="text-xl font-bold text-white mt-2">&ldquo;{getProverb()}&rdquo;</p>
+      <div className="animate-fade-in-up space-y-4 pb-20">
+        {/* 统计卡片 */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="nature-card p-3 text-center rounded-2xl">
+            <p className="text-2xl font-bold text-green-600">{pendingTasks.length}</p>
+            <p className="text-xs text-[#8b9e82]">待完成</p>
+          </div>
+          <div className="nature-card p-3 text-center rounded-2xl">
+            <p className="text-2xl font-bold text-amber-500">{todayTasks.filter(t => !t.done).length}</p>
+            <p className="text-xs text-[#8b9e82]">今日待办</p>
+          </div>
+          <div className="nature-card p-3 text-center rounded-2xl">
+            <p className="text-2xl font-bold text-[#1a2e1a]">{completionRate}%</p>
+            <p className="text-xs text-[#8b9e82]">完成率</p>
           </div>
         </div>
 
-        {/* Calendar */}
+        {/* 进度条 */}
+        <div className="nature-card p-4 rounded-2xl">
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-[#4a6741]">本周进度</span>
+            <span className="text-green-600">{completedTasks.length}/{tasks.length}</span>
+          </div>
+          <div className="h-2 bg-green-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-500"
+              style={{ width: `${completionRate}%` }}
+            />
+          </div>
+        </div>
+
+        {/* 农事日历 */}
         <div className="nature-card rounded-2xl p-5">
           <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">农事日历</h3>
           <div className="grid grid-cols-7 gap-1 text-center">
@@ -1920,91 +2123,66 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
           </div>
         </div>
 
-        {/* Task List */}
-        <div className="nature-card rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">任务列表</h3>
-          <div className="space-y-2">
-            {tasks.map((task) => (
-              <div
-                key={task.id}
-                className={`flex items-center gap-3 p-3 rounded-2xl border-l-4 ${getPriorityColor(task.priority)} bg-white transition-all duration-200 ${getPriorityGlow(task.priority)}`}
-              >
-                <button
-                  onClick={() => toggleTask(task.id)}
-                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 ${
-                    task.done ? "bg-green-500 border-green-500" : "border-[#e2e8d8]"
-                  }`}
-                >
-                  {task.done && <span className="text-white text-xs">✓</span>}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${task.done ? "line-through text-[#8b9e82]" : "text-[#4a6741]"}`}>
-                    {getCategoryIcon(task.category)} {task.text}
-                  </p>
-                  <p className="text-xs text-[#8b9e82] mt-0.5">{task.date}</p>
+        {/* 待办任务 */}
+        <div className="nature-card rounded-2xl">
+          <div className="p-4 border-b border-[#e2e8d8]">
+            <h3 className="font-semibold text-[#1a2e1a]">待办任务</h3>
+          </div>
+          {pendingTasks.length === 0 ? (
+            <div className="p-8 text-center">
+              <div className="text-4xl mb-2">🎉</div>
+              <p className="text-[#8b9e82]">所有任务已完成！</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#e2e8d8]">
+              {pendingTasks.map(task => (
+                <div key={task.id} className="p-4 flex items-center gap-3 hover:bg-green-50/50 transition-all duration-200">
+                  <input
+                    type="checkbox"
+                    checked={task.done}
+                    onChange={() => toggleTask(task.id)}
+                    className="w-5 h-5 rounded border-green-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <p className="text-[#1a2e1a]">{task.text}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs px-2 py-0.5 bg-green-50 text-green-700 rounded-full">{task.category}</span>
+                      <span className="text-xs text-[#8b9e82]">{task.date}</span>
+                    </div>
+                  </div>
+                  <div className={`w-2 h-2 rounded-full ${
+                    task.priority === "high" ? "bg-red-500" :
+                    task.priority === "medium" ? "bg-amber-500" : "bg-sky-500"
+                  }`} />
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Add Task */}
-        <div className="nature-card rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-[#1a2e1a] mb-3">添加任务</h3>
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2">
-            {(["施肥", "灌溉", "除虫", "除草", "其他"] as const).map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setNewTaskCategory(cat)}
-                className={`btn-pill flex-shrink-0 ${
-                  newTaskCategory === cat
-                    ? "btn-pill-active"
-                    : "btn-pill-inactive"
-                }`}
-              >
-                {getCategoryIcon(cat)} {cat}
-              </button>
-            ))}
+        {/* 已完成任务 */}
+        {completedTasks.length > 0 && (
+          <div className="nature-card rounded-2xl">
+            <div className="p-4 border-b border-[#e2e8d8]">
+              <h3 className="font-semibold text-[#8b9e82]">已完成 ({completedTasks.length})</h3>
+            </div>
+            <div className="divide-y divide-[#e2e8d8]">
+              {completedTasks.slice(0, 5).map(task => (
+                <div key={task.id} className="p-4 flex items-center gap-3 opacity-60">
+                  <input
+                    type="checkbox"
+                    checked
+                    onChange={() => toggleTask(task.id)}
+                    className="w-5 h-5 rounded border-green-300 text-green-600 cursor-pointer"
+                  />
+                  <span className="line-through text-[#8b9e82]">{task.text}</span>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="flex gap-2 mt-3">
-            <button
-              onClick={() => setNewTaskPriority("high")}
-              className={`btn-pill ${newTaskPriority === "high" ? "!bg-gradient-to-r !from-red-500 !to-red-600 !text-white !shadow-[0_2px_8px_rgba(239,68,68,0.2)]" : "btn-pill-inactive"}`}
-            >
-              紧急
-            </button>
-            <button
-              onClick={() => setNewTaskPriority("medium")}
-              className={`btn-pill ${newTaskPriority === "medium" ? "!bg-gradient-to-r !from-amber-400 !to-amber-500 !text-white !shadow-[0_2px_8px_rgba(245,158,11,0.2)]" : "btn-pill-inactive"}`}
-            >
-              一般
-            </button>
-            <button
-              onClick={() => setNewTaskPriority("low")}
-              className={`btn-pill ${newTaskPriority === "low" ? "!bg-gradient-to-r !from-sky-400 !to-sky-500 !text-white !shadow-[0_2px_8px_rgba(14,165,233,0.2)]" : "btn-pill-inactive"}`}
-            >
-              低
-            </button>
-          </div>
-          <div className="flex gap-2 mt-3">
-            <input
-              type="text"
-              value={newTask}
-              onChange={(e) => setNewTask(e.target.value)}
-              placeholder="输入任务内容"
-              className="input-nature flex-1"
-              onKeyDown={(e) => e.key === "Enter" && addTask()}
-            />
-            <button
-              onClick={addTask}
-              className="btn-primary px-6 ripple-container"
-            >
-              添加
-            </button>
-          </div>
-        </div>
+        )}
 
-        {/* Growth Records */}
+        {/* 生长记录 */}
         <div className="nature-card rounded-2xl p-5">
           <h3 className="text-sm font-semibold text-[#1a2e1a] mb-4">生长记录</h3>
           {growthRecords.length > 0 ? (
@@ -2029,277 +2207,376 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
             </div>
           )}
         </div>
+
+        {/* 悬浮添加按钮 */}
+        <button
+          onClick={() => setShowAddTask(true)}
+          className="fixed bottom-24 right-4 w-14 h-14 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full shadow-lg flex items-center justify-center text-white text-2xl active:scale-95 transition-transform z-40"
+        >
+          +
+        </button>
+
+        {/* 添加任务弹窗 */}
+        {showAddTask && (
+          <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50" onClick={() => setShowAddTask(false)}>
+            <div className="bg-white w-full max-w-lg rounded-t-3xl p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold mb-4 text-[#1a2e1a]">添加任务</h3>
+              <input
+                type="text"
+                placeholder="任务内容"
+                value={newTask}
+                onChange={e => setNewTask(e.target.value)}
+                className="input-nature mb-3 w-full"
+                onKeyDown={e => e.key === "Enter" && handleAddTask()}
+              />
+              <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-hide pb-2">
+                {(["施肥", "灌溉", "除虫", "除草", "其他"] as const).map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setNewTaskCategory(cat)}
+                    className={`btn-pill whitespace-nowrap ${newTaskCategory === cat ? "btn-pill-active" : "btn-pill-inactive"}`}
+                  >
+                    {getCategoryIcon(cat)} {cat}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={() => setNewTaskPriority("high")}
+                  className={`btn-pill ${newTaskPriority === "high" ? "!bg-gradient-to-r !from-red-500 !to-red-600 !text-white" : "btn-pill-inactive"}`}
+                >
+                  紧急
+                </button>
+                <button
+                  onClick={() => setNewTaskPriority("medium")}
+                  className={`btn-pill ${newTaskPriority === "medium" ? "!bg-gradient-to-r !from-amber-400 !to-amber-500 !text-white" : "btn-pill-inactive"}`}
+                >
+                  一般
+                </button>
+                <button
+                  onClick={() => setNewTaskPriority("low")}
+                  className={`btn-pill ${newTaskPriority === "low" ? "!bg-gradient-to-r !from-sky-400 !to-sky-500 !text-white" : "btn-pill-inactive"}`}
+                >
+                  低
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowAddTask(false)} className="btn-outline flex-1">取消</button>
+                <button onClick={handleAddTask} className="btn-primary flex-1">添加</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
   // ==================== Tab 4: Assistant (Nature Fresh Chat) ====================
 
-  const renderAssistant = () => (
-    <div className="animate-fade-in-up flex flex-col" style={{ height: "calc(100vh - 140px)" }}>
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto space-y-4 pb-3 px-1">
-        {chatMessages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
-          >
-            {msg.role === "ai" && (
-              <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 mr-2 border-2 border-green-200">
-                <Image src="/images/ai-assistant.jpg" alt="AI" width={32} height={32} className="img-cover" />
-              </div>
-            )}
-            <div
-              className={`max-w-[75%] rounded-2xl px-4 py-3 ${
-                msg.role === "user"
-                  ? "bg-green-500 text-white rounded-br-sm shadow-[0_4px_12px_rgba(34,197,94,0.2)]"
-                  : "nature-card text-[#4a6741] rounded-bl-sm"
-              }`}
-            >
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+  const renderAssistant = () => {
+    const quickQuestions = [
+      { icon: "🌱", text: "今天适合种什么？" },
+      { icon: "🐛", text: "如何防治蚜虫？" },
+      { icon: "💰", text: "最近菜价怎么样？" },
+      { icon: "🌤️", text: "明天天气如何？" },
+    ];
+
+    const handleQuickQuestion = (text: string) => {
+      setInputText(text);
+      setTimeout(() => {
+        processMessage(text, "text");
+      }, 100);
+    };
+
+    return (
+      <div className="animate-fade-in-up flex flex-col" style={{ height: "calc(100vh - 140px)" }}>
+        {/* 欢迎卡片 */}
+        <div className="nature-card p-4 mb-4 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-2xl shadow-[0_4px_12px_rgba(34,197,94,0.25)]">
+              🤖
+            </div>
+            <div>
+              <h3 className="font-semibold text-[#1a2e1a]">智农助手</h3>
+              <p className="text-sm text-[#8b9e82]">您的专属农业顾问</p>
             </div>
           </div>
-        ))}
-        <div ref={chatEndRef} />
-      </div>
+        </div>
 
-      {/* Quick Actions */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide py-3">
-        {["查天气", "问价格", "诊断病害", "种植建议"].map((action) => (
+        {/* 聊天区域 */}
+        <div className="flex-1 overflow-y-auto space-y-3 pb-4 px-1 scrollbar-hide">
+          {chatMessages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
+            >
+              {msg.role === "ai" && (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-lg flex-shrink-0 mr-2 shadow-[0_2px_8px_rgba(34,197,94,0.2)]">
+                  🤖
+                </div>
+              )}
+              <div
+                className={`max-w-[80%] p-3 rounded-2xl ${
+                  msg.role === "user"
+                    ? "bg-green-500 text-white rounded-br-sm shadow-[0_4px_12px_rgba(34,197,94,0.2)]"
+                    : "nature-card text-[#4a6741] rounded-bl-sm"
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+              </div>
+            </div>
+          ))}
+          {/* AI正在输入动画 */}
+          {isTyping && (
+            <div className="flex justify-start animate-fade-in">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-lg flex-shrink-0 mr-2 shadow-[0_2px_8px_rgba(34,197,94,0.2)]">
+                🤖
+              </div>
+              <div className="nature-card p-3 rounded-2xl rounded-bl-sm">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* 快捷问题 */}
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+          {quickQuestions.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => handleQuickQuestion(q.text)}
+              className="btn-pill whitespace-nowrap flex items-center gap-1 flex-shrink-0"
+            >
+              <span>{q.icon}</span>
+              <span>{q.text}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 输入区域 */}
+        <div className="flex gap-2 items-center pt-2">
           <button
-            key={action}
-            onClick={() => processVoiceQuery(action)}
-            className={`btn-pill flex-shrink-0 ${
-              action === "查天气" ? "btn-pill-active" : "btn-pill-inactive"
+            onClick={handleVoiceStart}
+            className={`p-3 rounded-full flex-shrink-0 cursor-pointer transition-all duration-300 ${
+              isListening
+                ? "bg-gradient-to-b from-red-500 to-red-600 shadow-[0_0_20px_rgba(239,68,68,0.3)] animate-gentle-pulse"
+                : "bg-[#f8faf5] text-green-600 active:scale-95 transition-transform border border-[#e2e8d8]"
             }`}
           >
-            {action}
+            <span className="text-lg">{isListening ? "⏹" : "🎤"}</span>
           </button>
-        ))}
-      </div>
-
-      {/* Input Area */}
-      <div className="flex items-center gap-2 py-2">
-        <input
-          type="text"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-          placeholder="输入您的问题..."
-          className="input-nature flex-1"
-        />
-        <button
-          onClick={handleSendMessage}
-          className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center cursor-pointer shadow-[0_4px_12px_rgba(34,197,94,0.25)] active:scale-[0.9] transition-all duration-200 flex-shrink-0"
-        >
-          <span className="text-white text-sm font-bold">↑</span>
-        </button>
-      </div>
-
-      {/* Voice Button */}
-      <div className="flex justify-center py-3">
-        <button
-          onClick={handleVoiceStart}
-          className={`w-16 h-16 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 ${
-            isListening
-              ? "bg-gradient-to-b from-red-500 to-red-600 shadow-[0_0_20px_rgba(239,68,68,0.3)] animate-gentle-pulse"
-              : "bg-white border-2 border-[#e2e8d8] shadow-lg active:scale-[0.9] hover:border-green-300"
-          }`}
-        >
-          <span className="text-2xl">{isListening ? "⏹" : "🎤"}</span>
-        </button>
-      </div>
-      {voiceText && (
-        <p className="text-xs text-center text-[#8b9e82] pb-1">识别结果：{voiceText}</p>
-      )}
-
-      {/* Camera Section */}
-      <div className="border-t border-[#e2e8d8] pt-3">
-        <div className="flex gap-2 mb-2">
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+            placeholder="输入您的问题..."
+            className="input-nature flex-1"
+          />
           <button
-            onClick={() => {
-              if (cameraActive) {
-                stopCamera();
-              } else {
-                startCamera();
-              }
-            }}
-            className="flex-1 w-full flex items-center justify-between p-3 rounded-2xl cursor-pointer transition-all duration-200 hover:bg-green-50/50 active:bg-green-50 text-[#4a6741] text-sm"
+            onClick={handleSendMessage}
+            disabled={!inputText.trim()}
+            className="p-3 rounded-full bg-green-500 text-white disabled:opacity-50 active:scale-95 transition-transform flex-shrink-0 shadow-[0_4px_12px_rgba(34,197,94,0.25)] cursor-pointer"
           >
-            {cameraActive ? "关闭相机" : "拍照识别"}
+            <span className="text-lg">📤</span>
           </button>
-          {!videoCallActive ? (
+        </div>
+
+        {/* 语音识别结果提示 */}
+        {voiceText && (
+          <p className="text-xs text-center text-[#8b9e82] pt-2">识别结果：{voiceText}</p>
+        )}
+
+        {/* 相机和视频通话区域 */}
+        <div className="border-t border-[#e2e8d8] pt-3 mt-3">
+          <div className="flex gap-2 mb-2">
             <button
-              onClick={handleVideoCall}
-              className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2"
+              onClick={() => {
+                if (cameraActive) {
+                  stopCamera();
+                } else {
+                  startCamera();
+                }
+              }}
+              className="flex-1 w-full flex items-center justify-center gap-2 p-3 rounded-2xl cursor-pointer transition-all duration-200 bg-[#f8faf5] hover:bg-green-50/50 active:bg-green-50 text-[#4a6741] text-sm border border-[#e2e8d8]"
             >
-              <span>📞</span>
-              呼叫农业专家
+              <span>📷</span>
+              {cameraActive ? "关闭相机" : "拍照识别"}
             </button>
-          ) : (
-            <button
-              onClick={() => setVideoCallActive(false)}
-              className="flex-1 w-16 h-16 rounded-full bg-gradient-to-b from-red-500 to-red-600 flex items-center justify-center cursor-pointer shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.9] transition-all duration-200"
-            >
-              <span className="text-2xl">📵</span>
-            </button>
+            {!videoCallActive ? (
+              <button
+                onClick={handleVideoCall}
+                className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2"
+              >
+                <span>📞</span>
+                呼叫专家
+              </button>
+            ) : (
+              <button
+                onClick={() => setVideoCallActive(false)}
+                className="flex-1 p-3 rounded-2xl bg-gradient-to-b from-red-500 to-red-600 text-white flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.9] transition-all duration-200"
+              >
+                <span>📵</span>
+                挂断
+              </button>
+            )}
+          </div>
+
+          {/* 相机取景器 */}
+          {cameraExpanded && (
+            <div className="relative bg-black rounded-2xl overflow-hidden" style={{ height: cameraActive ? "200px" : "0px" }}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute top-2 left-2 w-6 h-6 border-t-2 border-l-2 border-green-400" />
+              <div className="absolute top-2 right-2 w-6 h-6 border-t-2 border-r-2 border-green-400" />
+              <div className="absolute bottom-2 left-2 w-6 h-6 border-b-2 border-l-2 border-green-400" />
+              <div className="absolute bottom-2 right-2 w-6 h-6 border-b-2 border-r-2 border-green-400" />
+              {cameraActive && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-4">
+                  <button
+                    onClick={capturePhoto}
+                    className="w-12 h-12 rounded-full bg-white border-4 border-green-400 cursor-pointer shadow-[0_2px_12px_rgba(34,197,94,0.25)]"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 拍摄的照片 */}
+          {capturedFrame && (
+            <div className="mt-2 relative">
+              <img src={capturedFrame} alt="拍摄" className="w-full h-40 object-cover rounded-2xl" />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handlePhotoAnalyze}
+                  className="btn-primary flex-1 ripple-container flex items-center justify-center gap-2"
+                >
+                  <span>🔬</span>
+                  AI分析
+                </button>
+                <button
+                  onClick={() => setCapturedFrame(null)}
+                  className="btn-outline flex-1"
+                >
+                  重拍
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 视频通话动画 */}
+          {videoCallActive && (
+            <div className="flex flex-col items-center py-4">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-r from-sky-400 to-green-500 flex items-center justify-center animate-blink shadow-[0_2px_12px_rgba(14,165,233,0.25)]">
+                <span className="text-2xl">👨‍🌾</span>
+              </div>
+              <p className="text-sm text-[#8b9e82] mt-2">正在连接农业专家...</p>
+            </div>
           )}
         </div>
 
-        {/* Camera Viewfinder */}
-        {cameraExpanded && (
-          <div className="relative bg-black rounded-2xl overflow-hidden" style={{ height: cameraActive ? "200px" : "0px" }}>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute top-2 left-2 w-6 h-6 border-t-2 border-l-2 border-green-400" />
-            <div className="absolute top-2 right-2 w-6 h-6 border-t-2 border-r-2 border-green-400" />
-            <div className="absolute bottom-2 left-2 w-6 h-6 border-b-2 border-l-2 border-green-400" />
-            <div className="absolute bottom-2 right-2 w-6 h-6 border-b-2 border-r-2 border-green-400" />
-            {cameraActive && (
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-4">
-                <button
-                  onClick={capturePhoto}
-                  className="w-12 h-12 rounded-full bg-white border-4 border-green-400 cursor-pointer shadow-[0_2px_12px_rgba(34,197,94,0.25)]"
-                />
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Captured Frame */}
-        {capturedFrame && (
-          <div className="mt-2 relative">
-            <img src={capturedFrame} alt="拍摄" className="w-full h-40 object-cover rounded-2xl" />
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={handlePhotoAnalyze}
-                className="btn-primary flex-1 ripple-container flex items-center justify-center gap-2"
-              >
-                <span>🔬</span>
-                AI分析
-              </button>
-              <button
-                onClick={() => setCapturedFrame(null)}
-                className="btn-outline flex-1"
-              >
-                重拍
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Video Call Animation */}
-        {videoCallActive && (
-          <div className="flex flex-col items-center py-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-r from-sky-400 to-green-500 flex items-center justify-center animate-blink shadow-[0_2px_12px_rgba(14,165,233,0.25)]">
-              <span className="text-2xl">👨‍🌾</span>
-            </div>
-            <p className="text-sm text-[#8b9e82] mt-2">正在连接农业专家...</p>
-          </div>
-        )}
+        <canvas ref={canvasRef} className="hidden" />
       </div>
-
-      <canvas ref={canvasRef} className="hidden" />
-    </div>
-  );
+    );
+  };
 
   // ==================== Tab 5: Profile (Nature Fresh) ====================
 
-  const renderProfile = () => (
-    <div className="animate-fade-in-up space-y-5 pb-4">
-      {/* Profile Header */}
-      <div className="relative h-48 rounded-3xl overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 animate-gradient" />
-        <div className="absolute inset-0 p-6 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-white/15 flex items-center justify-center border-2 border-white/25 backdrop-blur-sm">
-            <span className="text-3xl">👨‍🌾</span>
-          </div>
-          <div className="flex-1">
-            <h2 className="text-xl font-bold text-white">{userName}</h2>
-            <p className="text-sm text-white/70 mt-0.5">{farmName}</p>
-          </div>
-          <button
-            onClick={() => {
-              setChatMessages((prev) => [...prev, { role: "ai", text: "功能即将上线" }]);
-              setActiveTab(4);
-            }}
-            className="text-xs font-medium bg-white/15 backdrop-blur-md px-4 py-1.5 rounded-full cursor-pointer active:scale-[0.95] transition-all duration-200 hover:bg-white/25 text-white"
-          >
-            编辑
-          </button>
-        </div>
-      </div>
+  const renderProfile = () => {
+    const menuItems = [
+      { icon: "⚙️", label: "设置", desc: "语言、通知、主题", onClick: () => {} },
+      { icon: "❓", label: "帮助中心", desc: "常见问题、联系客服", onClick: () => {} },
+      { icon: "ℹ️", label: "关于我们", desc: "版本信息、开发团队", onClick: () => {} },
+      { icon: "💬", label: "意见反馈", desc: "帮助我们做得更好", onClick: () => {} },
+    ];
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 animate-fade-in-up delay-100" style={{ opacity: 0 }}>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <span className="text-xl block">🗺</span>
-          <p className="text-2xl font-bold text-green-gradient mt-1">5</p>
-          <p className="text-xs text-[#8b9e82] mt-0.5">地块数</p>
-        </div>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <span className="text-xl block">📥</span>
-          <p className="text-2xl font-bold text-earth-gradient mt-1">12</p>
-          <p className="text-xs text-[#8b9e82] mt-0.5">订单数</p>
-        </div>
-        <div className="nature-card rounded-2xl p-4 text-center nature-card-hover transition-all duration-300">
-          <span className="text-xl block">💰</span>
-          <p className="text-2xl font-bold text-warm-gradient mt-1">3.8万</p>
-          <p className="text-xs text-[#8b9e82] mt-0.5">总收入</p>
-        </div>
-      </div>
+    const handleMenuClick = (label: string) => {
+      setChatMessages((prev) => [...prev, { role: "user", text: `打开${label}` }]);
+      setTimeout(() => {
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "ai", text: `已收到您的"${label}"请求，正在为您处理中...` },
+        ]);
+      }, 500);
+      setActiveTab(4);
+    };
 
-      {/* Menu */}
-      <div className="nature-card rounded-2xl overflow-hidden animate-fade-in-up delay-200" style={{ opacity: 0 }}>
-        {[
-          { icon: "📥", label: "我的订单", desc: "查看和管理订单", badge: 2 },
-          { icon: "📊", label: "收益报告", desc: "收入与支出统计", badge: 0 },
-          { icon: "🗺", label: "地块管理", desc: "管理我的地块", badge: 0 },
-          { icon: "🔔", label: "消息通知", desc: "系统消息与提醒", badge: 5 },
-          { icon: "⚙️", label: "设置", desc: "应用设置", badge: 0 },
-          { icon: "❓", label: "帮助中心", desc: "常见问题解答", badge: 0 },
-          { icon: "ℹ️", label: "关于我们", desc: "版本与团队信息", badge: 0 },
-        ].map((item) => (
-          <button
-            key={item.label}
-            onClick={() => {
-              setChatMessages((prev) => [...prev, { role: "user", text: `打开${item.label}` }]);
-              setTimeout(() => {
-                setChatMessages((prev) => [
-                  ...prev,
-                  { role: "ai", text: `已收到您的"${item.label}"请求，正在为您处理中...` },
-                ]);
-              }, 500);
-              setActiveTab(4);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-4 cursor-pointer transition-all duration-200 active:bg-green-50 hover:bg-green-50/50"
-          >
-            <div className="flex items-center gap-3 flex-1">
-              <span className="text-lg">{item.icon}</span>
-              <div className="text-left flex-1">
-                <p className="text-sm font-medium text-[#1a2e1a]">{item.label}</p>
-                <p className="text-[10px] text-[#8b9e82]">{item.desc}</p>
-              </div>
-              {item.badge > 0 && (
-                <span className="min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-[0_2px_6px_rgba(239,68,68,0.2)]">
-                  {item.badge > 99 ? "99+" : item.badge}
-                </span>
-              )}
-              <ChevronRightIcon size={16} className="text-[#8b9e82]" />
+    const handleLogout = () => {
+      setChatMessages((prev) => [...prev, { role: "ai", text: "退出登录功能即将上线" }]);
+      setActiveTab(4);
+    };
+
+    return (
+      <div className="animate-fade-in-up space-y-4 pb-4">
+        {/* 用户信息卡片 */}
+        <div className="nature-card p-6 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 text-white rounded-3xl">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-3xl border-2 border-white/30">
+              👨‍🌾
             </div>
-          </button>
-        ))}
-      </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-semibold">{userName}</h2>
+              <p className="text-sm opacity-90 flex items-center gap-1 mt-1">
+                <LocationIcon className="w-4 h-4" />
+                {userProvince || "未设置地区"}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setChatMessages((prev) => [...prev, { role: "ai", text: "编辑资料功能即将上线" }]);
+                setActiveTab(4);
+              }}
+              className="p-2 rounded-full bg-white/20 active:scale-95 transition-transform cursor-pointer"
+            >
+              <EditIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
 
-      {/* Version */}
-      <p className="text-center text-xs text-[#8b9e82] pt-2">智农规划 v3.0.0</p>
-    </div>
-  );
+        {/* 菜单列表 */}
+        <div className="nature-card rounded-2xl overflow-hidden divide-y divide-[#e2e8d8]">
+          {menuItems.map((item, i) => (
+            <button
+              key={i}
+              onClick={() => handleMenuClick(item.label)}
+              className="w-full p-4 flex items-center gap-4 active:bg-green-50 transition-colors text-left cursor-pointer"
+            >
+              <span className="text-2xl">{item.icon}</span>
+              <div className="flex-1">
+                <p className="font-medium text-[#1a2e1a]">{item.label}</p>
+                <p className="text-sm text-[#8b9e82]">{item.desc}</p>
+              </div>
+              <ChevronRightIcon className="w-5 h-5 text-[#8b9e82]" />
+            </button>
+          ))}
+        </div>
+
+        {/* 版本信息 */}
+        <div className="text-center text-sm text-[#8b9e82] pt-4">
+          <p>智农规划 v2.0</p>
+          <p className="text-xs mt-1">© 2024 智农科技</p>
+        </div>
+
+        {/* 退出按钮 */}
+        <button
+          onClick={handleLogout}
+          className="w-full btn-outline text-red-600 border-red-200 hover:bg-red-50 cursor-pointer"
+        >
+          退出登录
+        </button>
+      </div>
+    );
+  };
 
   // ==================== Bottom Navigation ====================
 
