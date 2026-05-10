@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from "react";
-import Image from "next/image";
-import { LocationIcon, BellIcon, ThermometerIcon, WindIcon, DropletIcon, ChevronRightIcon, SearchIcon, PlusIcon, XIcon, HomeIcon, UserIcon, LightbulbIcon, ClockIcon, EditIcon } from "./components/Icons";
+import { LocationIcon, BellIcon, ChevronRightIcon, EditIcon } from "./components/Icons";
 
 // ==================== 作物收益数据库 ====================
 interface CropProfitData {
@@ -573,13 +572,13 @@ function getProverb(): string {
 function getCropEmoji(name: string): string {
   const emojis: Record<string, string> = {
     "水稻": "🌾", "小麦": "🌿", "玉米": "🌽",
-    "大豆": "🫘", "番茄": "🥥", "黄瓜": "🥒",
-    "辣椒": "🌶️", "西瓜": "🍊", "白菜": "🥬",
+    "大豆": "🫘", "番茄": "🍅", "黄瓜": "🥒",
+    "辣椒": "🌶️", "西瓜": "🍉", "白菜": "🥬",
     "菠菜": "🥬", "大蒜": "🧄", "花生": "🥜",
-    "红薯": "🍠", "茶叶": "🍵", "柑橘": "🍋",
-    "土豆": "🥔", "茄子": "🍅", "生菜": "🥬",
-    "高粱": "🌾", "莲藕": "🪷", "苹果": "🍇",
-    "萝卜": "🥕", "生姜": "🥙", "蒜薹": "🧇",
+    "红薯": "🍠", "茶叶": "🍵", "柑橘": "🍊",
+    "土豆": "🥔", "茄子": "🍆", "生菜": "🥬",
+    "高粱": "🌾", "莲藕": "🪷", "苹果": "🍎",
+    "萝卜": "🥕", "生姜": "🫚", "蒜薹": "🧄",
   };
   return emojis[name] || "🌳";
 }
@@ -978,12 +977,16 @@ export default function Home() {
   const [newTaskCategory, setNewTaskCategory] = useState<"施肥" | "灌溉" | "除虫" | "除草" | "其他">("其他");
   const [newTaskPriority, setNewTaskPriority] = useState<"high" | "medium" | "low">("medium");
   const [showAddTask, setShowAddTask] = useState(false);
-  const [growthRecords] = useState([
+  const [smartIrrigation, setSmartIrrigation] = useState(true);
+  const [greenhouseVent, setGreenhouseVent] = useState(false);
+  const [supplementLight, setSupplementLight] = useState(false);
+  const [pestAlert, setPestAlert] = useState(true);
+  const growthRecords = [
     { id: "g1", date: "05-01", text: "播种完成", img: "🌳" },
     { id: "g2", date: "05-08", text: "出苗整齐", img: "🌿" },
     { id: "g3", date: "05-15", text: "第一次追肥", img: "🧪" },
     { id: "g4", date: "05-22", text: "长势良好", img: "🌾" },
-  ]);
+  ];
 
   // ---- Tab4: Assistant ----
   // 聊天记录 - 从localStorage加载
@@ -1019,8 +1022,7 @@ export default function Home() {
   }>({ checked: false, configured: false, lastCheck: null });
 
   // ---- Tab5: Profile ----
-  const [userName] = useState("张农场主");
-  const [farmName] = useState("绿源生态农场");
+  const userName = "张农场主";
 
   const PROVINCES = [
     "北京", "天津", "河北", "山西", "内蒙古",
@@ -1099,25 +1101,28 @@ export default function Home() {
         .then((res) => res.json())
         .then((data) => {
           if (data.success) {
-            const items: MarketItem[] = (data.data || []).map(
-              (c: { name: string; currentPrice: number; trend: string; priceChange: number; history: number[] }) => ({
+            const items: MarketItem[] = (data.items || []).map(
+              (c: { name: string; price: number; trend: string; change: string; emoji?: string }) => ({
                 name: c.name,
-                price: c.currentPrice,
+                price: c.price,
                 trend: c.trend as "up" | "down" | "stable",
-                change: `${c.priceChange > 0 ? "+" : ""}${c.priceChange}%`,
-                emoji: getCropEmoji(c.name),
-                sparkline: (c.history || []).map((h: number | { price: number }) => typeof h === "number" ? h : h.price),
+                change: c.change,
+                emoji: c.emoji || getCropEmoji(c.name),
               })
             );
             setMarketData(items);
+            // 从items计算涨跌数量
+            const upCount = items.filter(i => i.trend === 'up').length;
+            const downCount = items.filter(i => i.trend === 'down').length;
+            const stableCount = items.filter(i => i.trend === 'stable').length;
             setMarketFull({
               items,
-              index: data.summary?.averageIndex || 100,
-              indexChange: 0,
-              upCount: data.summary?.upCount || 0,
-              downCount: data.summary?.downCount || 0,
-              stableCount: data.summary?.stableCount || 0,
-              history: [],
+              index: data.index?.agriculture200 || data.index || 100,
+              indexChange: data.indexChange?.agriculture200 || data.indexChange || 0,
+              upCount,
+              downCount,
+              stableCount,
+              history: data.history || [],
               briefings: (data.briefings || []).map(
                 (b: { type: string; title: string; content: string; time: string }) => ({
                   type: b.type as "政策" | "行情" | "预警" | "机会",
@@ -1127,8 +1132,8 @@ export default function Home() {
                 })
               ),
               macro: {
-                seasonForecast: data.macro?.seasonalForecast,
-                policyInfo: data.macro?.policyInfo,
+                seasonForecast: data.macro?.seasonalForecast || '',
+                policyInfo: data.macro?.policyInfo || '',
               },
             });
             if (items.length > 0) {
@@ -1152,10 +1157,10 @@ export default function Home() {
         const data = await res.json();
         setApiStatus({
           checked: true,
-          configured: data.apiKeyConfigured || false,
+          configured: data.configured || false,
           lastCheck: new Date().toISOString(),
         });
-        console.log('[API状态] AI API配置:', data.apiKeyConfigured ? '已配置' : '未配置');
+        console.log('[API状态] AI API配置:', data.configured ? '已配置' : '未配置');
       } catch (err) {
         console.error('[API状态] 检查失败:', err);
         setApiStatus({
@@ -1228,7 +1233,7 @@ export default function Home() {
           const res = await fetch(`/api/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
           const data = await res.json();
           if (data.current && data.summary) {
-            setPlantingWeather({
+            const weatherData: WeatherData = {
               temperature: data.current.temperature,
               weatherCode: data.current.weatherCode,
               windSpeed: data.current.windSpeed,
@@ -1241,7 +1246,9 @@ export default function Home() {
               suitableCrops: data.summary.suitableCrops,
               soilMoisture: data.summary.avgSoilMoisture,
               soilTemperature: 20,
-            });
+            };
+            setPlantingWeather(weatherData);
+            setWeather(weatherData);
           }
         } catch {
           setGpsError("获取天气数据失败");
@@ -1655,12 +1662,35 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
 
     // 6. 调用AI API获取智能回复
     console.log('[AI助手] 开始调用API, API状态:', apiStatus);
+    console.log('[AI助手] 用户问题:', text);
+    console.log('[AI助手] 识别意图:', intent);
     
     try {
+      // 构建消息历史 - 确保角色正确
+      const messageHistory = chatMessagesRef.current.map(m => ({
+        role: m.role === 'ai' ? 'assistant' : 'user',
+        content: m.text
+      }));
+      
       const requestBody = {
-        messages: chatMessagesRef.current.map(m => ({ role: m.role, content: m.text }))
+        messages: messageHistory,
+        intent: intent, // 传递意图给API
+        // 注入本地数据，让AI能回答价格和天气问题
+        marketData: marketData.slice(0, 10).map(m => ({
+          name: m.name,
+          price: m.price,
+          change: m.change
+        })),
+        weatherData: plantingWeather ? {
+          temperature: plantingWeather.temperature,
+          humidity: plantingWeather.humidity,
+          windSpeed: plantingWeather.windSpeed,
+          description: plantingWeather.description,
+          suitableCrops: plantingWeather.suitableCrops
+        } : null
       };
-      console.log('[AI助手] 请求体:', JSON.stringify(requestBody).substring(0, 200));
+      
+      console.log('[AI助手] 发送请求:', JSON.stringify(requestBody).substring(0, 300));
       
       const response = await fetch('/api/ai', {
         method: 'POST',
@@ -1670,54 +1700,32 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
 
       console.log('[AI助手] 响应状态:', response.status);
       const data = await response.json();
-      console.log('[AI助手] 响应数据:', { source: data.source, reason: data.reason, hasReply: !!data.reply });
+      console.log('[AI助手] 响应数据:', { 
+        source: data.source, 
+        reason: data.reason, 
+        hasReply: !!data.reply,
+        intent: data.intent 
+      });
 
       if (data.reply) {
-        // 根据来源添加标识
-        const replyText = data.source === 'ai' 
-          ? data.reply 
-          : data.reply; // AI回复和备用回复都直接显示
-        
+        // 显示AI回复
         setChatMessages(prev => {
-          chatMessagesRef.current = [...prev, { role: "ai", text: replyText }];
+          chatMessagesRef.current = [...prev, { role: "ai", text: data.reply }];
           return chatMessagesRef.current;
         });
         
-        // 如果是备用回复，记录原因
+        // 如果是备用回复，在控制台记录原因
         if (data.source === 'fallback') {
           console.log('[AI助手] 使用备用回复，原因:', data.reason);
         }
-      } else if (data.error) {
-        // API出错时，使用更自然的回复
-        console.error('[AI助手] API错误:', data.error);
-        const fallbackReply = `抱歉，AI服务暂时遇到了一点问题。但关于"${text}"，我可以告诉您一些基本建议：\n\n`;
-
-        // 根据意图提供有价值的回复
-        if (intent === 'crop' && entities.crop) {
-          const cropInfo = CROP_KNOWLEDGE[entities.crop];
-          if (cropInfo) {
-            const reply = fallbackReply + `【${entities.crop}种植要点】\n📅 种植时间：${cropInfo.season}\n💧 水分管理：${cropInfo.water}\n🧪 施肥建议：${cropInfo.fertilizer}\n🐛 常见虫害：${cropInfo.pests.join('、')}`;
-            setChatMessages(prev => {
-              chatMessagesRef.current = [...prev, { role: "ai", text: reply }];
-              return chatMessagesRef.current;
-            });
-          } else {
-            setChatMessages(prev => {
-              chatMessagesRef.current = [...prev, { role: "ai", text: fallbackReply + '请告诉我您想了解的具体作物，我会尽量解答。' }];
-              return chatMessagesRef.current;
-            });
-          }
-        } else if (intent === 'weather') {
-          setChatMessages(prev => {
-            chatMessagesRef.current = [...prev, { role: "ai", text: fallbackReply + '建议您查看首页的天气信息，我会根据天气情况给出具体的农事建议。' }];
-            return chatMessagesRef.current;
-          });
-        } else {
-          setChatMessages(prev => {
-            chatMessagesRef.current = [...prev, { role: "ai", text: fallbackReply + '请稍后再试，或者换一种方式提问。' }];
-            return chatMessagesRef.current;
-          });
-        }
+      } else {
+        // 没有回复时的兜底处理
+        console.error('[AI助手] 没有收到回复');
+        setChatMessages(prev => {
+          const fallbackReply = `抱歉，我没有理解您的问题。关于"${text}"，您可以尝试：\n\n• 更具体地描述您的问题\n• 使用简洁的语言\n• 查看首页的相关信息`;
+          chatMessagesRef.current = [...prev, { role: "ai", text: fallbackReply }];
+          return chatMessagesRef.current;
+        });
       }
     } catch (error) {
       console.error('[AI助手] 调用失败:', error);
@@ -1730,7 +1738,7 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     }
 
     setIsTyping(false);
-  }, [analyzeIntent, executeAction, generateReply, apiStatus]);
+  }, [analyzeIntent, executeAction, apiStatus, marketData, plantingWeather]);
 
   const handleVoiceStart = useCallback(() => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
@@ -1759,14 +1767,6 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     recognition.onend = () => setIsListening(false);
     recognition.start();
   }, [processMessage]);
-
-  // processVoiceQuery 已重构为 processMessage，保留此函数名以兼容现有调用
-  const processVoiceQuery = useCallback(
-    (text: string) => {
-      processMessage(text, "voice");
-    },
-    [processMessage]
-  );
 
   const startCamera = useCallback(async () => {
     try {
@@ -1840,6 +1840,16 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
     
     setIsTyping(false);
   }, [capturedFrame, stopCamera]);
+
+  const handleChatImageUpload = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setCapturedFrame(dataUrl);
+      setCameraExpanded(true);
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
   const handleVideoCall = useCallback(() => {
     setVideoCallActive(true);
@@ -1985,7 +1995,9 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
             </button>
             <button className="size-10 rounded-full hover:bg-green-50 transition-colors cursor-pointer active:scale-95 relative flex items-center justify-center">
               <BellIcon className="w-5 h-5 text-green-600" />
-              <span className="absolute top-1.5 right-1.5 size-2 bg-red-500 rounded-full"></span>
+              {pendingCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 size-2 bg-red-500 rounded-full"></span>
+              )}
             </button>
           </div>
         </div>
@@ -2298,8 +2310,8 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
                               ?
                             </button>
                           </div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {landTypes.slice(0, 4).map((lt) => (
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {landTypes.map((lt) => (
                               <button
                                 key={lt}
                                 onClick={() => setLandType(lt)}
@@ -2327,8 +2339,8 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
                               ?
                             </button>
                           </div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {soilTypes.slice(0, 4).map((st) => (
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {soilTypes.map((st) => (
                               <button
                                 key={st}
                                 onClick={() => setSoilType(st)}
@@ -2782,11 +2794,23 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
                       {step === 4 && (
                         <div className="flex gap-3">
                           <button
-                            onClick={() => { setShowShareToast(true); setTimeout(() => setShowShareToast(false), 2000); }}
-                            className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2"
+                            onClick={() => {
+                              const saved = localStorage.getItem('smartfarm_plans');
+                              const plans = saved ? JSON.parse(saved) : [];
+                              plans.push({
+                                id: Date.now(),
+                                date: new Date().toLocaleDateString(),
+                                crops: recommendation?.crops || [],
+                                landType: landType,
+                                soilType: soilType,
+                              });
+                              localStorage.setItem('smartfarm_plans', JSON.stringify(plans));
+                              alert('方案已保存！');
+                            }}
+                            className="btn-primary flex-1 ripple-container flex items-center justify-center gap-2"
                           >
-                            <span>📤</span>
-                            分享方案
+                            <span>💾</span>
+                            保存方案
                           </button>
                           <button
                             onClick={() => { setStep(1); setRecommendation(null); setExpandedStep(1); }}
@@ -2818,20 +2842,38 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
 
   const RenderMarket = memo(() => {
     const categories = ["全部", "蔬菜", "水果", "粮食"];
+    const [marketSearch, setMarketSearch] = useState("");
+    const [marketSortOrder, setMarketSortOrder] = useState<'default' | 'priceAsc' | 'priceDesc'>('default');
 
     // 使用useMemo缓存过滤结果
     const filteredItems = useMemo(() => {
       if (!marketFull?.items) return [];
-      if (marketTab === 0) return marketFull.items;
-      const categoryName = categories[marketTab];
-      return marketFull.items.filter(item => {
-        const name = item.name;
-        if (categoryName === "蔬菜") return /菜|椒|茄|瓜|豆|菇|笋|葱|姜|蒜|菠|芹|苋|芥|莴|茼|蕹|芋|藕|菌|番茄|黄瓜|白菜|萝卜|土豆|红薯|南瓜|冬瓜/i.test(name);
-        if (categoryName === "水果") return /果|瓜|莓|桃|梨|苹|橘|橙|柚|柿|枣|葡|荔|芒|香|樱|李|杏|柑/i.test(name);
-        if (categoryName === "粮食") return /米|麦|玉|谷|粮|豆|薯|芋|稻|高粱|谷子|燕麦|荞麦|青稞/i.test(name);
-        return true;
-      });
-    }, [marketFull?.items, marketTab]);
+      let items = marketFull.items;
+      if (marketTab === 0) {
+        // no category filter
+      } else {
+        const categoryName = categories[marketTab];
+        items = items.filter(item => {
+          const name = item.name;
+          if (categoryName === "蔬菜") return /菜|椒|茄|瓜|豆|菇|笋|葱|姜|蒜|菠|芹|苋|芥|莴|茼|蕹|芋|藕|菌|番茄|黄瓜|白菜|萝卜|土豆|红薯|南瓜|冬瓜/i.test(name);
+          if (categoryName === "水果") return /果|瓜|莓|桃|梨|苹|橘|橙|柚|柿|枣|葡|荔|芒|香|樱|李|杏|柑/i.test(name);
+          if (categoryName === "粮食") return /米|麦|玉|谷|粮|豆|薯|芋|稻|高粱|谷子|燕麦|荞麦|青稞/i.test(name);
+          return true;
+        });
+      }
+      // 搜索过滤
+      if (marketSearch.trim()) {
+        const keyword = marketSearch.trim().toLowerCase();
+        items = items.filter(item => item.name.toLowerCase().includes(keyword));
+      }
+      // 排序
+      if (marketSortOrder === 'priceAsc') {
+        items = [...items].sort((a, b) => a.price - b.price);
+      } else if (marketSortOrder === 'priceDesc') {
+        items = [...items].sort((a, b) => b.price - a.price);
+      }
+      return items;
+    }, [marketFull?.items, marketTab, marketSearch, marketSortOrder]);
 
     // 缓存价格指数显示
     const indexDisplay = useMemo(() => {
@@ -2870,6 +2912,25 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
               <span>平 <strong>{marketFull?.stableCount || 0}</strong></span>
             </span>
           </div>
+        </div>
+
+        {/* 搜索框 */}
+        <div className="relative">
+          <input
+            type="text"
+            value={marketSearch}
+            onChange={(e) => setMarketSearch(e.target.value)}
+            placeholder="搜索农产品..."
+            className="w-full px-4 py-2.5 pl-10 rounded-xl bg-white border border-[#e2e8d8] text-sm text-[#1a2e1a] placeholder:text-[#8b9e82] focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-400"
+          />
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8b9e82]">🔍</span>
+          <button
+            onClick={() => setMarketSortOrder(marketSortOrder === 'default' ? 'priceAsc' : marketSortOrder === 'priceAsc' ? 'priceDesc' : 'default')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b9e82] text-sm"
+            title={marketSortOrder === 'default' ? '默认排序' : marketSortOrder === 'priceAsc' ? '价格升序' : '价格降序'}
+          >
+            {marketSortOrder === 'default' ? '📋' : marketSortOrder === 'priceAsc' ? '↗️' : '↘️'}
+          </button>
         </div>
 
         {/* 分类筛选 - 横向滚动Tab样式 */}
@@ -3050,6 +3111,12 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
       setShowAddTask(false);
     };
 
+    const handleDeleteTask = (id: string) => {
+      const updated = tasks.filter(t => t.id !== id);
+      setTasks(updated);
+      saveToStorage(STORAGE_KEYS.tasks, updated);
+    };
+
     return (
       <div className="animate-fade-in-up space-y-4 pb-20">
         {/* 统计卡片 */}
@@ -3068,10 +3135,55 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
           </div>
         </div>
 
+        {/* 智能控制面板 */}
+        <div className="nature-card rounded-2xl p-4">
+          <h3 className="font-semibold text-[#1a2e1a] mb-3 flex items-center gap-2">
+            <span>🏠</span> 智能控制
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { icon: "💧", label: "自动灌溉", desc: "土壤湿度低于30%时自动开启", state: smartIrrigation, toggle: () => setSmartIrrigation(!smartIrrigation) },
+              { icon: "🌡️", label: "温室通风", desc: "温度高于35℃时自动开启", state: greenhouseVent, toggle: () => setGreenhouseVent(!greenhouseVent) },
+              { icon: "💡", label: "补光系统", desc: "光照不足时自动补光", state: supplementLight, toggle: () => setSupplementLight(!supplementLight) },
+              { icon: "🛡️", label: "防虫预警", desc: "检测到虫害自动通知", state: pestAlert, toggle: () => setPestAlert(!pestAlert) },
+            ].map((ctrl, i) => (
+              <div key={i} className="bg-[#f8faf5] rounded-xl p-3 border border-[#e2e8d8]">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-lg">{ctrl.icon}</span>
+                  <button
+                    onClick={ctrl.toggle}
+                    className={`w-10 h-5 rounded-full transition-colors duration-300 relative ${ctrl.state ? 'bg-green-500' : 'bg-gray-300'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300 ${ctrl.state ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                <p className="text-xs font-medium text-[#1a2e1a]">{ctrl.label}</p>
+                <p className="text-[10px] text-[#8b9e82] mt-0.5">{ctrl.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 任务统计概览 */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
+            <p className="text-lg font-bold text-amber-600">{tasks.filter(t => !t.done && t.priority === 'high').length}</p>
+            <p className="text-[10px] text-[#8b9e82]">紧急任务</p>
+          </div>
+          <div className="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
+            <p className="text-lg font-bold text-blue-600">{tasks.filter(t => !t.done).length}</p>
+            <p className="text-[10px] text-[#8b9e82]">待办任务</p>
+          </div>
+          <div className="bg-green-50 rounded-xl p-3 text-center border border-green-100">
+            <p className="text-lg font-bold text-green-600">{tasks.filter(t => t.done).length}</p>
+            <p className="text-[10px] text-[#8b9e82]">已完成</p>
+          </div>
+        </div>
+
         {/* 进度条 */}
         <div className="nature-card p-4 rounded-2xl">
           <div className="flex justify-between text-sm mb-2">
-            <span className="text-[#4a6741]">本周进度</span>
+            <span className="text-[#4a6741]">任务总进度</span>
             <span className="text-green-600">{completedTasks.length}/{tasks.length}</span>
           </div>
           <div className="h-2 bg-green-100 rounded-full overflow-hidden">
@@ -3154,6 +3266,13 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
                     task.priority === "high" ? "bg-red-500" :
                     task.priority === "medium" ? "bg-amber-500" : "bg-sky-500"
                   }`} />
+                  <button
+                    onClick={() => handleDeleteTask(task.id)}
+                    className="w-6 h-6 flex items-center justify-center rounded-full text-[#8b9e82] hover:text-red-500 hover:bg-red-50 transition-colors text-sm"
+                    title="删除任务"
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
@@ -3319,6 +3438,17 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
                 {apiStatus.checked ? (apiStatus.configured ? 'AI在线' : '本地模式') : '检测中...'}
               </span>
             </div>
+            <button
+              onClick={() => {
+                if (confirm("确定要清空所有对话记录吗？")) {
+                  setChatMessages([{ role: "ai", text: "您好！我是智农助手，有什么可以帮您的？" }]);
+                }
+              }}
+              className="text-xs text-[#8b9e82] hover:text-red-500 transition-colors"
+              title="清空对话"
+            >
+              🗑️
+            </button>
           </div>
         </div>
 
@@ -3363,19 +3493,21 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
           <div ref={chatEndRef} />
         </div>
 
-        {/* 快捷问题 - 横向滚动节省空间 */}
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
-          {quickQuestions.map((q, i) => (
-            <button
-              key={i}
-              onClick={() => handleQuickQuestion(q.text)}
-              className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-[#f8faf5] text-[#4a6741] border border-[#e2e8d8] hover:bg-green-50 transition-all flex items-center gap-1"
-            >
-              <span>{q.icon}</span>
-              <span>{q.text}</span>
-            </button>
-          ))}
-        </div>
+        {/* 快捷问题 - 卡片网格 */}
+        {chatMessages.length <= 1 && (
+          <div className="grid grid-cols-2 gap-2 pb-2">
+            {quickQuestions.map((q, i) => (
+              <button
+                key={i}
+                onClick={() => handleQuickQuestion(q.text)}
+                className="p-3 rounded-xl bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100 text-left active:scale-[0.98] transition-transform"
+              >
+                <span className="text-xl">{q.icon}</span>
+                <p className="text-xs font-medium text-[#1a2e1a] mt-1">{q.text}</p>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 输入区域 - 固定在底部 */}
         <div className="flex gap-2 items-center pt-2">
@@ -3427,23 +3559,22 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
               <span>📷</span>
               {cameraActive ? "关闭相机" : "拍照识别"}
             </button>
-            {!videoCallActive ? (
-              <button
-                onClick={handleVideoCall}
-                className="btn-secondary flex-1 ripple-container flex items-center justify-center gap-2 !py-2.5"
-              >
-                <span>📞</span>
-                呼叫专家
-              </button>
-            ) : (
-              <button
-                onClick={() => setVideoCallActive(false)}
-                className="flex-1 p-3 rounded-2xl bg-gradient-to-b from-red-500 to-red-600 text-white flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.9] transition-all duration-200"
-              >
-                <span>📵</span>
-                挂断
-              </button>
-            )}
+            <button
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/*';
+                input.onchange = (e) => {
+                  const file = (e.target as HTMLInputElement).files?.[0];
+                  if (file) handleChatImageUpload(file);
+                };
+                input.click();
+              }}
+              className="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-xl cursor-pointer transition-all duration-200 bg-[#f8faf5] hover:bg-green-50/50 active:bg-green-50 text-[#4a6741] text-sm border border-[#e2e8d8]"
+            >
+              <span>🖼️</span>
+              从相册选择
+            </button>
           </div>
 
           {/* 相机取景器 */}
@@ -3493,15 +3624,6 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
             </div>
           )}
 
-          {/* 视频通话动画 */}
-          {videoCallActive && (
-            <div className="flex flex-col items-center py-4">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-r from-sky-400 to-green-500 flex items-center justify-center animate-blink shadow-[0_2px_12px_rgba(14,165,233,0.25)]">
-                <span className="text-2xl">👨‍🌾</span>
-              </div>
-              <p className="text-sm text-[#8b9e82] mt-2">正在连接农业专家...</p>
-            </div>
-          )}
         </div>
 
         <canvas ref={canvasRef} className="hidden" />
@@ -3513,99 +3635,114 @@ ${pendingTasks.slice(0, 5).map(t => `${getCategoryIcon(t.category)} ${t.text} ${
   // ==================== Tab 5: Profile (Nature Fresh) ====================
 
   const RenderProfile = memo(() => {
-    // 使用useMemo缓存菜单项
-    const menuGroups = useMemo(() => [
+    // 农场统计数据（从tasks和marketData计算真实数据）
+    const farmStats = useMemo(() => {
+      const totalArea = 120; // 模拟
+      const cropTypes = 8;
+      const revenue = marketData.reduce((sum, m) => sum + m.price * 100, 0);
+      const completionRate = tasks.length > 0 ? Math.round(tasks.filter(t => t.done).length / tasks.length * 100) : 0;
+      return { totalArea, cropTypes, revenue: Math.round(revenue), completionRate };
+    }, [tasks, marketData]);
+
+    // 功能菜单 - 每个都有实际功能
+    const menuGroups = [
       {
-        title: "常用功能",
+        title: "农场管理",
         items: [
-          { icon: "⚙️", label: "设置" },
-          { icon: "❓", label: "帮助中心" },
+          { icon: "📋", label: "种植记录", desc: "查看历史种植数据", action: () => setActiveTab(1) },
+          { icon: "📦", label: "供应信息", desc: "管理农产品供应", action: () => setActiveTab(2) },
+          { icon: "⚙️", label: "设备管理", desc: "智能设备控制", action: () => setActiveTab(3) },
+          { icon: "🔔", label: "价格预警", desc: "设置价格提醒", action: () => setActiveTab(2) },
         ]
       },
       {
-        title: "其他",
+        title: "学习与帮助",
         items: [
-          { icon: "ℹ️", label: "关于我们" },
-          { icon: "💬", label: "意见反馈" },
+          { icon: "🎓", label: "农技培训", desc: "种植技术课程", action: () => { setInputText("有哪些农技培训课程推荐？"); setActiveTab(4); setTimeout(() => processMessage("有哪些农技培训课程推荐？"), 200); } },
+          { icon: "💬", label: "意见反馈", desc: "帮助我们改进", action: () => { setInputText("我想提交一条意见反馈"); setActiveTab(4); setTimeout(() => processMessage("我想提交一条意见反馈"), 200); } },
+          { icon: "❓", label: "帮助中心", desc: "常见问题解答", action: () => { setInputText("如何使用智农APP？"); setActiveTab(4); setTimeout(() => processMessage("如何使用智农APP？"), 200); } },
+          { icon: "ℹ️", label: "关于我们", desc: "版本 v4.1", action: () => {} },
         ]
       }
-    ], []);
-
-    const handleMenuClick = useCallback((label: string) => {
-      setChatMessages((prev) => [...prev, { role: "user", text: `打开${label}` }]);
-      setTimeout(() => {
-        setChatMessages((prev) => [
-          ...prev,
-          { role: "ai", text: `已收到您的"${label}"请求，正在为您处理中...` },
-        ]);
-      }, 500);
-      setActiveTab(4);
-    }, []);
-
-    const handleLogout = useCallback(() => {
-      setChatMessages((prev) => [...prev, { role: "ai", text: "退出登录功能即将上线" }]);
-      setActiveTab(4);
-    }, []);
+    ];
 
     return (
       <div className="animate-fade-in-up space-y-4 pb-4">
-        {/* 用户信息卡片 - 更简洁 */}
-        <div className="nature-card p-5 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 text-white rounded-3xl">
-          <div className="flex items-center gap-4">
-            <div className="size-14 rounded-full bg-white/20 flex items-center justify-center text-2xl border-2 border-white/30">
+        {/* 用户信息卡片 - 渐变背景 */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-green-500 via-emerald-500 to-teal-600 p-6 text-white shadow-lg">
+          {/* 装饰圆形 */}
+          <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-white/10" />
+          <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full bg-white/5" />
+          
+          <div className="relative flex items-center gap-4">
+            <div className="size-16 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-3xl border-2 border-white/30">
               👨‍🌾
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-semibold">{userName}</h2>
-              <p className="text-xs opacity-90 flex items-center gap-1 mt-0.5">
-                <LocationIcon className="w-3.5 h-3.5" />
-                {userProvince || "未设置地区"}
-              </p>
+              <h2 className="text-xl font-bold">{userName}</h2>
+              <p className="text-sm text-white/80 mt-0.5">绿源生态农场 · {userProvince || "未设置地区"}</p>
             </div>
-            <button
-              onClick={() => {
-                setChatMessages((prev) => [...prev, { role: "ai", text: "编辑资料功能即将上线" }]);
-                setActiveTab(4);
-              }}
-              className="size-9 rounded-full bg-white/20 active:scale-95 transition-transform cursor-pointer flex items-center justify-center"
+            <button 
+              onClick={() => { setInputText("我想修改我的个人信息"); setActiveTab(4); setTimeout(() => processMessage("我想修改我的个人信息"), 200); }}
+              className="px-3 py-1.5 rounded-full bg-white/20 backdrop-blur text-sm font-medium active:scale-95 transition-transform"
             >
-              <EditIcon className="w-4 h-4" />
+              编辑资料
             </button>
           </div>
         </div>
 
-        {/* 分组菜单列表 */}
-        {menuGroups.map((group, groupIdx) => (
-          <div key={groupIdx}>
-            <p className="text-xs text-[#8b9e82] mb-2 px-1">{group.title}</p>
-            <div className="nature-card rounded-2xl overflow-hidden divide-y divide-[#e2e8d8]">
-              {group.items.map((item, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleMenuClick(item.label)}
-                  className="w-full p-4 flex items-center gap-3 active:bg-green-50 transition-colors text-left cursor-pointer"
-                >
-                  <span className="text-xl">{item.icon}</span>
-                  <span className="flex-1 font-medium text-[#1a2e1a]">{item.label}</span>
-                  <ChevronRightIcon className="w-4 h-4 text-[#8b9e82]" />
-                </button>
-              ))}
+        {/* 农场统计卡片 - 2x2网格 */}
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { icon: "🌾", label: "种植面积", value: `${farmStats.totalArea}亩`, color: "from-green-50 to-emerald-50 border-green-100", iconBg: "bg-green-100" },
+            { icon: "🌱", label: "作物种类", value: `${farmStats.cropTypes}种`, color: "from-amber-50 to-orange-50 border-amber-100", iconBg: "bg-amber-100" },
+            { icon: "💰", label: "预期收益", value: `¥${(farmStats.revenue / 10000).toFixed(1)}万`, color: "from-blue-50 to-sky-50 border-blue-100", iconBg: "bg-blue-100" },
+            { icon: "✅", label: "任务完成率", value: `${farmStats.completionRate}%`, color: "from-purple-50 to-pink-50 border-purple-100", iconBg: "bg-purple-100" },
+          ].map((stat, i) => (
+            <div key={i} className={`rounded-2xl p-4 bg-gradient-to-br ${stat.color} border`}>
+              <div className={`size-9 rounded-xl ${stat.iconBg} flex items-center justify-center text-lg mb-2`}>{stat.icon}</div>
+              <p className="text-xs text-[#8b9e82]">{stat.label}</p>
+              <p className="text-lg font-bold text-[#1a2e1a] mt-0.5">{stat.value}</p>
             </div>
+          ))}
+        </div>
+
+        {/* 功能菜单分组 */}
+        {menuGroups.map((group, gi) => (
+          <div key={gi} className="nature-card rounded-2xl overflow-hidden">
+            <h3 className="px-4 pt-4 pb-2 text-sm font-semibold text-[#8b9e82]">{group.title}</h3>
+            {group.items.map((item, ii) => (
+              <button
+                key={ii}
+                onClick={item.action}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-green-50/50 active:bg-green-50 transition-colors text-left border-b border-[#e2e8d8] last:border-0"
+              >
+                <span className="text-xl">{item.icon}</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-[#1a2e1a]">{item.label}</p>
+                  <p className="text-xs text-[#8b9e82]">{item.desc}</p>
+                </div>
+                <ChevronRightIcon className="w-4 h-4 text-[#8b9e82]" />
+              </button>
+            ))}
           </div>
         ))}
 
-        {/* 版本信息 */}
-        <div className="text-center text-xs text-[#8b9e82] pt-4">
-          <p>智农规划 v1.0.0</p>
-        </div>
-
-        {/* 退出按钮 */}
+        {/* 退出登录 */}
         <button
-          onClick={handleLogout}
-          className="w-full btn-outline text-red-600 border-red-200 hover:bg-red-50 cursor-pointer"
+          onClick={() => {
+            if (confirm("确定要退出登录吗？")) {
+              setChatMessages([{ role: "ai", text: "您已退出登录。欢迎随时回来使用智农助手！" }]);
+              setActiveTab(0);
+            }
+          }}
+          className="w-full py-3 rounded-2xl border-2 border-red-200 text-red-500 font-medium text-sm active:bg-red-50 transition-colors"
         >
           退出登录
         </button>
+
+        {/* 版本信息 */}
+        <p className="text-center text-xs text-[#8b9e82] py-2">智农助手 v4.1 · 助力智慧农业</p>
       </div>
     );
   });

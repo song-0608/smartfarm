@@ -264,11 +264,14 @@ async function fetchPriceIndex(): Promise<{
   indexChange: MarketResponse['indexChange'];
   updateTime: string;
 }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(`${MOA_BASE_URL}/common-price-index/getIndexList`, {
       method: 'POST',
       headers: MOA_HEADERS,
       body: JSON.stringify({}),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -326,8 +329,10 @@ async function fetchPriceIndex(): Promise<{
       }
     }
 
+    clearTimeout(timeoutId);
     return { index: indexData, indexChange, updateTime };
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('获取价格指数失败:', error);
     // 返回默认值
     return {
@@ -359,11 +364,14 @@ async function fetchPriceIndex(): Promise<{
  * 数据来源：农业农村部重点农产品市场信息平台
  */
 async function fetchVarietyList(): Promise<Array<{ id: string; name: string; category: string }>> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(`${MOA_BASE_URL}/sys-variety/selectList`, {
       method: 'POST',
       headers: MOA_HEADERS,
       body: JSON.stringify({}),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -376,8 +384,10 @@ async function fetchVarietyList(): Promise<Array<{ id: string; name: string; cat
       throw new Error(`品种列表API返回错误: ${result.msg}`);
     }
 
+    clearTimeout(timeoutId);
     return result.data;
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('获取品种列表失败:', error);
     // 返回默认品种列表
     return [
@@ -405,6 +415,8 @@ async function fetchPriceTrend(varietyId?: string): Promise<{
   items: MarketItem[];
   history: Array<{ date: string; price: number }>;
 }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
   try {
     const requestBody = varietyId ? { varietyId } : {};
     
@@ -412,6 +424,7 @@ async function fetchPriceTrend(varietyId?: string): Promise<{
       method: 'POST',
       headers: MOA_HEADERS,
       body: JSON.stringify(requestBody),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -439,8 +452,10 @@ async function fetchPriceTrend(varietyId?: string): Promise<{
       price: h.price,
     })) || [];
 
+    clearTimeout(timeoutId);
     return { items, history };
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('获取价格趋势失败:', error);
     // 返回模拟数据
     return {
@@ -663,20 +678,7 @@ export async function GET(request: Request) {
         { name: '鸡蛋', emoji: '🥚', price: 10.28, unit: '元/公斤', trend: 'down', change: '-2.5%', market: '全国平均' },
         { name: '鸡肉', emoji: '🍗', price: 18.52, unit: '元/公斤', trend: 'stable', change: '0.0%', market: '全国平均' },
       ],
-      history: [
-        { date: '2024-01-01', price: 125.2 },
-        { date: '2024-01-15', price: 126.5 },
-        { date: '2024-02-01', price: 127.8 },
-        { date: '2024-02-15', price: 126.2 },
-        { date: '2024-03-01', price: 128.5 },
-        { date: '2024-03-15', price: 129.2 },
-        { date: '2024-04-01', price: 128.8 },
-        { date: '2024-04-15', price: 127.5 },
-        { date: '2024-05-01', price: 128.2 },
-        { date: '2024-05-15', price: 129.5 },
-        { date: '2024-06-01', price: 130.2 },
-        { date: '2024-06-15', price: 128.5 },
-      ],
+      history: generateHistoryData(),
       briefings: [
         { type: '行情', title: '夏季蔬菜供应充足，价格整体稳定', content: '随着夏季蔬菜大量上市，市场供应充足，预计蔬菜价格将保持平稳运行。', time: '今天' },
         { type: '预警', title: '南方暴雨影响部分地区蔬菜供应', content: '近期南方部分地区遭遇暴雨天气，可能对当地蔬菜生产和运输造成一定影响。', time: '昨天' },

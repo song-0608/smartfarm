@@ -116,9 +116,15 @@ export async function GET(request: NextRequest) {
       forecast_days: '7',
     });
 
+    const weatherController = new AbortController();
+    const weatherTimeoutId = setTimeout(() => weatherController.abort(), 8000);
+
     const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?${params.toString()}`
+      `https://api.open-meteo.com/v1/forecast?${params.toString()}`,
+      { signal: weatherController.signal }
     );
+
+    clearTimeout(weatherTimeoutId);
 
     if (!response.ok) {
       return NextResponse.json(
@@ -157,14 +163,14 @@ export async function GET(request: NextRequest) {
       precipitation: data.hourly.precipitation[index],
       weatherCode: data.hourly.weather_code[index],
       weatherDescription: getWeatherDescription(data.hourly.weather_code[index]),
-      soilTemperature: data.hourly.soil_temperature_0cm[index],
-      soilMoisture: data.hourly.soil_moisture_0_to_1cm[index],
+      soilTemperature: data.hourly.soil_temperature_0cm?.[index] ?? null,
+      soilMoisture: data.hourly.soil_moisture_0_to_1cm?.[index] ?? null,
     }));
 
     // 计算汇总信息
     const allTemps = data.hourly.temperature_2m as number[];
     const allPrecip = data.daily.precipitation_sum as number[];
-    const allSoilMoisture = data.hourly.soil_moisture_0_to_1cm as number[];
+    const allSoilMoisture = (data.hourly.soil_moisture_0_to_1cm as number[] | undefined) || [];
 
     const avgTemperature = allTemps.length > 0
       ? Math.round((allTemps.reduce((a: number, b: number) => a + b, 0) / allTemps.length) * 10) / 10

@@ -4,8 +4,27 @@ import { NextRequest, NextResponse } from 'next/server';
 const API_KEY = process.env.ZHIPU_API_KEY || '5c2c3c310dc54e9198d460382c6aae82.6yD8AT0fsLjnGSxr';
 
 // 备用农业知识库回复
-const getFallbackReply = (question: string): string => {
+const getFallbackReply = (question: string, intent?: string): string => {
   const lowerQ = question.toLowerCase();
+  
+  // 根据意图提供更精准的回复
+  if (intent === 'price' || lowerQ.includes('价格') || lowerQ.includes('行情') || lowerQ.includes('菜价') || lowerQ.includes('多少钱')) {
+    return `💰 关于农产品价格：
+
+目前我无法获取实时价格数据，建议您通过以下渠道查询：
+
+【官方渠道】
+1. 农业农村部市场信息平台（www.moa.gov.cn）
+2. 全国农产品批发市场价格信息系统
+3. 当地农业农村局官网
+
+【市场规律】
+• 蔬菜：夏季供应充足价格低，冬季大棚菜价格高
+• 粮食：新粮上市时价格较低，春节前需求增加
+• 建议关注长期趋势，合理安排种植和销售
+
+您想了解哪种作物的具体行情？`;
+  }
   
   if (lowerQ.includes('水稻') || lowerQ.includes('稻子')) {
     return `🌾 水稻种植指南：
@@ -19,9 +38,7 @@ const getFallbackReply = (question: string): string => {
 4. 管理：保持水层3-5cm，分蘖期追肥
 5. 收割：稻穗金黄时收割
 
-【常见问题】稻瘟病、稻飞虱，注意及时防治。
-
-需要更详细的某个环节指导吗？`;
+【常见问题】稻瘟病、稻飞虱，注意及时防治。`;
   }
   
   if (lowerQ.includes('小麦')) {
@@ -107,28 +124,6 @@ const getFallbackReply = (question: string): string => {
 具体是什么作物出现了什么问题？`;
   }
   
-  if (lowerQ.includes('价格') || lowerQ.includes('行情') || lowerQ.includes('菜价') || lowerQ.includes('多少钱') || lowerQ.includes('贵不贵') || lowerQ.includes('涨') || lowerQ.includes('跌')) {
-    return `💰 农产品价格建议：
-
-【官方渠道】
-1. 农业农村部市场信息平台
-2. 地方农产品批发市场
-3. 当地农业部门价格监测
-
-【影响因素】
-• 季节性：旺季价格低，淡季高
-• 天气：灾害天气导致涨价
-• 节假日：节前需求增加
-• 运输成本：油价、人工影响
-
-【建议】
-• 关注长期趋势，不只看单日价
-• 适时出售，避免集中上市
-• 考虑储存成本和市场风险
-
-您想了解哪种农产品的价格？`;
-  }
-  
   if (lowerQ.includes('天气') || lowerQ.includes('下雨') || lowerQ.includes('温度')) {
     return `🌤️ 农事天气建议：
 
@@ -160,19 +155,53 @@ const getFallbackReply = (question: string): string => {
 请告诉我您想了解什么？`;
 };
 
+// 识别用户意图
+const detectIntent = (text: string): string => {
+  const lower = text.toLowerCase();
+  if (/价格|行情|多少钱|收购价|市场价|菜价|肉价|蛋价|油价/.test(lower)) return 'price';
+  if (/天气|温度|下雨|降水|湿度|刮风/.test(lower)) return 'weather';
+  if (/病|虫|害|打药|防治|症状|农药|杀虫/.test(lower)) return 'pest';
+  if (/怎么种|种植|栽培|施肥|浇水|管理/.test(lower)) return 'crop';
+  if (/任务|提醒|记录|农事|待办/.test(lower)) return 'task';
+  if (/农事|日历|什么时候|几月|节气/.test(lower)) return 'calendar';
+  if (/你好|您好|在吗|早上好|下午好/.test(lower)) return 'greeting';
+  return 'general';
+};
+
 export async function POST(req: NextRequest) {
   try {
-    const { messages, imageBase64 } = await req.json();
+    const body = await req.json();
+    const { messages, imageBase64, intent } = body;
+    
+    console.log('[AI API] 收到请求:', { 
+      messageCount: messages?.length, 
+      hasImage: !!imageBase64,
+      intent: intent || detectIntent(messages?.[messages?.length - 1]?.content || '')
+    });
+    
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.error('[AI API] 错误: 消息为空');
+      return NextResponse.json({ 
+        reply: '抱歉，我没有收到您的问题，请重新输入。',
+        source: 'fallback',
+        reason: 'empty_messages'
+      });
+    }
     
     const lastMessage = messages[messages.length - 1]?.content || '';
+    const detectedIntent = intent || detectIntent(lastMessage);
+    
+    console.log('[AI API] 最后一条消息:', lastMessage.substring(0, 50));
+    console.log('[AI API] 检测到意图:', detectedIntent);
     
     // 检查API Key是否存在
     if (!API_KEY) {
       console.log('[AI API] 错误: 未配置API Key');
       return NextResponse.json({ 
-        reply: getFallbackReply(lastMessage),
+        reply: getFallbackReply(lastMessage, detectedIntent),
         source: 'fallback',
-        reason: 'no_api_key'
+        reason: 'no_api_key',
+        intent: detectedIntent
       });
     }
     
@@ -180,41 +209,89 @@ export async function POST(req: NextRequest) {
     
     // 调用智谱AI API，带超时控制
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 增加到15秒
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     
     try {
-      const requestBody: Record<string, unknown> = {
+      // 获取本地市场数据（从请求中传入）
+      const marketData = body.marketData || [];
+      const weatherData = body.weatherData || null;
+      
+      // 构建包含本地数据的system prompt
+      let systemPrompt = '你是智农APP的AI助手，专门服务农户。请用通俗易懂的语言回答，给出具体可操作的建议。回复简洁实用，直接回答问题。\n\n';
+      
+      // 注入市场行情数据
+      if (marketData && marketData.length > 0) {
+        systemPrompt += '【当前市场行情数据】\n';
+        for (const item of marketData) {
+          systemPrompt += `- ${item.name}：${item.price}元/斤，${item.change || '持平'}\n`;
+        }
+        systemPrompt += '\n当用户询问价格、行情、菜价时，请直接使用以上数据回答，不要说"无法获取"。给出价格分析和种植/销售建议。\n\n';
+      }
+      
+      // 注入天气数据
+      if (weatherData) {
+        systemPrompt += `【当前天气信息】\n`;
+        systemPrompt += `- 温度：${weatherData.temperature}℃\n`;
+        systemPrompt += `- 湿度：${weatherData.humidity}%\n`;
+        systemPrompt += `- 风速：${weatherData.windSpeed}km/h\n`;
+        systemPrompt += `- 天气：${weatherData.description}\n`;
+        systemPrompt += `- 适宜作物：${(weatherData.suitableCrops || []).join('、')}\n\n`;
+        systemPrompt += '当用户询问天气时，请结合以上数据给出农事建议。\n\n';
+      }
+      
+      systemPrompt += '【你的能力范围】\n';
+      systemPrompt += '- 作物种植技术指导\n';
+      systemPrompt += '- 病虫害诊断和防治建议\n';
+      systemPrompt += '- 农产品价格行情分析（使用上面的数据）\n';
+      systemPrompt += '- 天气农事建议（使用上面的数据）\n';
+      systemPrompt += '- 农事日历和节气安排\n';
+      systemPrompt += '- 施肥、灌溉等农事操作指导\n\n';
+      systemPrompt += '【回答规范】\n';
+      systemPrompt += '1. 价格问题：必须引用上面的市场数据，给出具体数字和涨跌分析，然后给出种植/销售建议\n';
+      systemPrompt += '2. 天气问题：必须引用上面的天气数据，结合温度湿度给出具体农事操作建议\n';
+      systemPrompt += '3. 种植问题：给出分步骤的种植指南，包括时间、条件、方法、注意事项\n';
+      systemPrompt += '4. 病虫害问题：先描述症状识别方法，再给出具体防治方案（药物名称+用量+注意事项）\n';
+      systemPrompt += '5. 通用问题：给出2-3条实用建议\n\n';
+      systemPrompt += '【格式要求】\n';
+      systemPrompt += '- 使用emoji让回复更生动（如🌾🐛💰🌤️📋）\n';
+      systemPrompt += '- 使用【】标注段落标题\n';
+      systemPrompt += '- 关键数据用粗体或数字突出\n';
+      systemPrompt += '- 建议列表用编号1.2.3.\n';
+      systemPrompt += '- 控制在200字以内，简洁实用\n\n';
+      systemPrompt += '重要：回答要直接、具体、可操作。不要说"无法获取数据"，你有本地数据可以使用。';
+      
+      // 构建消息数组
+      const apiMessages = [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        ...messages.map((m: {role: string, content: string}) => ({
+          role: m.role === 'ai' ? 'assistant' : m.role,
+          content: m.content
+        }))
+      ];
+      
+      // 如果有图片，修改最后一条消息
+      if (imageBase64) {
+        apiMessages.pop();
+        apiMessages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: lastMessage || '请分析这张图片中的作物状况，如果有病虫害请说明症状和防治方法。' },
+            { type: 'image_url', image_url: { url: imageBase64 } }
+          ] as unknown as string
+        });
+      }
+      
+      const requestBody = {
         model: imageBase64 ? 'glm-4v-flash' : 'glm-4-flash',
-        messages: [
-          {
-            role: 'system',
-            content: '你是一位专业的农业专家，擅长作物种植、病虫害防治、土壤管理、农产品市场分析等领域。请用通俗易懂的语言回答农户的问题，给出具体可操作的建议。回复要简洁实用，避免过长的开场白。'
-          },
-          ...messages,
-        ],
+        messages: apiMessages,
         temperature: 0.7,
         max_tokens: 1500,
       };
       
-      // 如果有图片，添加图片内容
-      if (imageBase64) {
-        requestBody.messages = [
-          {
-            role: 'system',
-            content: '你是一位专业的农业专家，擅长作物种植、病虫害防治、土壤管理、农产品市场分析等领域。请用通俗易懂的语言回答农户的问题，给出具体可操作的建议。回复要简洁实用，避免过长的开场白。'
-          },
-          ...messages.slice(0, -1),
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: lastMessage || '请分析这张图片中的作物状况，如果有病虫害请说明症状和防治方法。' },
-              { type: 'image_url', image_url: { url: imageBase64 } }
-            ]
-          }
-        ];
-      }
-      
-      console.log('[AI API] 请求体准备完成, 模型:', requestBody.model);
+      console.log('[AI API] 请求体:', JSON.stringify(requestBody).substring(0, 300));
       
       const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
         method: 'POST',
@@ -240,27 +317,24 @@ export async function POST(req: NextRequest) {
         }
         console.error('[AI API] API错误:', response.status, errorData);
         
-        // 返回更详细的错误信息
         return NextResponse.json({ 
-          reply: getFallbackReply(lastMessage),
+          reply: getFallbackReply(lastMessage, detectedIntent),
           source: 'fallback',
           reason: 'api_error',
-          error: {
-            status: response.status,
-            message: errorData.error?.message || errorData.error?.code || 'API调用失败'
-          }
+          intent: detectedIntent
         });
       }
 
       const data = await response.json();
-      console.log('[AI API] 响应数据:', JSON.stringify(data).substring(0, 200) + '...');
+      console.log('[AI API] 响应数据:', JSON.stringify(data).substring(0, 200));
       
       if (!data.choices || !data.choices[0] || !data.choices[0].message) {
         console.error('[AI API] 返回格式异常:', data);
         return NextResponse.json({ 
-          reply: getFallbackReply(lastMessage),
+          reply: getFallbackReply(lastMessage, detectedIntent),
           source: 'fallback',
-          reason: 'invalid_response'
+          reason: 'invalid_response',
+          intent: detectedIntent
         });
       }
       
@@ -268,7 +342,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ 
         reply: data.choices[0].message.content,
         source: 'ai',
-        model: data.model
+        model: data.model,
+        intent: detectedIntent
       });
       
     } catch (fetchError: unknown) {
@@ -277,29 +352,28 @@ export async function POST(req: NextRequest) {
       if (err.name === 'AbortError') {
         console.error('[AI API] 请求超时');
         return NextResponse.json({ 
-          reply: getFallbackReply(lastMessage),
+          reply: getFallbackReply(lastMessage, detectedIntent),
           source: 'fallback',
-          reason: 'timeout'
+          reason: 'timeout',
+          intent: detectedIntent
         });
       } else {
         console.error('[AI API] 请求失败:', err.message);
         return NextResponse.json({ 
-          reply: getFallbackReply(lastMessage),
+          reply: getFallbackReply(lastMessage, detectedIntent),
           source: 'fallback',
           reason: 'network_error',
-          error: err.message
+          intent: detectedIntent
         });
       }
     }
     
   } catch (error: unknown) {
     console.error('[AI API] 处理错误:', error);
-    const err = error as Error;
     return NextResponse.json({ 
       reply: '抱歉，服务暂时遇到问题，请稍后再试。',
       source: 'fallback',
-      reason: 'server_error',
-      error: err.message
+      reason: 'server_error'
     });
   }
 }
@@ -308,8 +382,7 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: 'ok',
-    apiKeyConfigured: !!API_KEY,
-    keyPrefix: API_KEY ? API_KEY.substring(0, 8) + '...' : null,
+    configured: !!API_KEY,
     timestamp: new Date().toISOString()
   });
 }
